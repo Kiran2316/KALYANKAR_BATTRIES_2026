@@ -1,100 +1,83 @@
 import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
 import Topbar from '../components/Topbar.jsx'
 import { useChart } from '../components/useChart.js'
 
-const statCards = [
-  { label: "Today's Sales", value: '₹ 18,750', change: '12.5% vs yesterday', changeType: 'up', icon: 'fa-indian-rupee-sign', iconClass: 'icon-blue' },
-  { label: 'Total Products', value: '86', change: 'Total in Inventory', changeType: 'muted', icon: 'fa-battery-full', iconClass: 'icon-navy' },
-  { label: 'Low Stock', value: '12', valueClass: 'text-warning', change: 'Products low in stock', changeType: 'orange', icon: 'fa-triangle-exclamation', iconClass: 'icon-orange' },
-  { label: "Today's Orders", value: '15', change: '7.1% vs yesterday', changeType: 'up', icon: 'fa-receipt', iconClass: 'icon-green' },
-  { label: 'Total Customers', value: '248', change: 'All registered customers', changeType: 'muted', icon: 'fa-users', iconClass: 'icon-blue' },
-  { label: 'Pending Payments', value: '₹ 26,350', valueClass: 'text-danger', change: 'From 18 customers', changeType: 'down', icon: 'fa-wallet', iconClass: 'icon-red' },
-]
+const SALES_STORAGE_KEY = 'kalyankar-sales'
+const PURCHASE_STORAGE_KEY = 'purchaseStockHistory'
 
-const recentSales = [
-  { inv: 'INV-2024-0192', meta: 'Rahul Patil · 10:32 AM', status: 'Paid' },
-  { inv: 'INV-2024-0191', meta: 'Sachin Jadhav · 09:15 AM', status: 'Paid' },
-  { inv: 'INV-2024-0190', meta: 'Amit Shinde · Yesterday', status: 'Due' },
-  { inv: 'INV-2024-0189', meta: 'Priya Kulkarni · Yesterday', status: 'Paid' },
-  { inv: 'INV-2024-0188', meta: 'Vikram Desai · 17 May', status: 'Paid' },
-]
+function formatCurrency(value) {
+  return 'Rs. ' + Number(value || 0).toLocaleString('en-IN', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })
+}
 
-const lowStockItems = [
-  { product: 'Exide 45Ah', brand: 'Exide', stock: 2, status: 'Low Stock' },
-  { product: 'Amaron 65Ah', brand: 'Amaron', stock: 1, status: 'Out of Stock' },
-  { product: 'Power Zone 35Ah', brand: 'Power Zone', stock: 3, status: 'Low Stock' },
-  { product: 'Tata Green 50Ah', brand: 'Tata Green', stock: 0, status: 'Out of Stock' },
-]
+function todayKey() {
+  return new Date().toISOString().slice(0, 10)
+}
 
-const recentPurchases = [
-  { bill: 'PUR-0045', supplier: 'Exide Distributor', amount: '₹ 42,000' },
-  { bill: 'PUR-0044', supplier: 'Amaron Wholesale', amount: '₹ 38,500' },
-  { bill: 'PUR-0043', supplier: 'Tata Green Agency', amount: '₹ 22,000' },
-  { bill: 'PUR-0042', supplier: 'Power Zone Supply', amount: '₹ 15,800' },
-]
+function readStorage(key) {
+  try {
+    const data = JSON.parse(localStorage.getItem(key) || '[]')
+    return Array.isArray(data) ? data : []
+  } catch {
+    return []
+  }
+}
 
-const topSelling = [
-  { product: 'Amaron 45Ah', sold: 28, amount: '₹ 1,82,000' },
-  { product: 'Exide 65Ah', sold: 22, amount: '₹ 1,80,400' },
-  { product: 'Tata Green 50Ah', sold: 18, amount: '₹ 1,33,200' },
-  { product: 'Power Zone 35Ah', sold: 15, amount: '₹ 97,500' },
-]
-
-const pendingPayments = [
-  { name: 'Sachin Jadhav', since: 'Due since 12 May 2024', amount: '₹ 8,200' },
-  { name: 'Mahesh More', since: 'Due since 10 May 2024', amount: '₹ 6,500' },
-  { name: 'Ravi Gaikwad', since: 'Due since 8 May 2024', amount: '₹ 5,400' },
-  { name: 'Neha Patil', since: 'Due since 5 May 2024', amount: '₹ 6,250' },
-]
-
-function stockBadgeClass(status) {
-  return status === 'Out of Stock' ? 'badge-out-stock' : 'badge-low-stock'
+function purchasePaid(row) {
+  return (row.ledger || []).reduce((sum, entry) => sum + Number(entry.amount || 0), 0)
 }
 
 export default function Dashboard() {
-  const salesChartRef = useChart({
-    type: 'line',
-    data: {
-      labels: ['May 13', 'May 14', 'May 15', 'May 16', 'May 17', 'May 18', 'May 19'],
-      datasets: [{
-        label: 'Sales (₹)',
-        data: [12400, 9800, 15200, 11300, 14600, 16800, 18750],
-        borderColor: '#00AEEF',
-        backgroundColor: 'rgba(0,174,239,0.08)',
-        borderWidth: 2.5,
-        fill: true,
-        tension: 0.4,
-        pointBackgroundColor: '#00AEEF',
-        pointRadius: 4,
-        pointHoverRadius: 6,
-      }],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: (ctx) => ' ₹ ' + ctx.parsed.y.toLocaleString('en-IN') } },
-      },
-      scales: {
-        x: { grid: { display: false }, ticks: { font: { size: 11 }, color: '#94a3b8' } },
-        y: {
-          grid: { color: '#f1f5f9' },
-          ticks: { font: { size: 11 }, color: '#94a3b8', callback: (v) => '₹' + v / 1000 + 'k' },
-        },
-      },
-    },
-  })
+  const [sales, setSales] = useState([])
+  const [purchases, setPurchases] = useState([])
 
-  const stockChartRef = useChart({
+  useEffect(() => {
+    setSales(readStorage(SALES_STORAGE_KEY))
+    setPurchases(readStorage(PURCHASE_STORAGE_KEY))
+  }, [])
+
+  const summary = useMemo(() => {
+    const today = todayKey()
+    const todaySales = sales.filter((sale) => (sale.invoiceDate || sale.date || '').slice(0, 10) === today)
+    const totalSalesAmount = sales.reduce((sum, sale) => sum + Number(sale.amount || sale.grandTotal || 0), 0)
+    const todaySalesAmount = todaySales.reduce((sum, sale) => sum + Number(sale.amount || sale.grandTotal || 0), 0)
+    const salesDue = sales.reduce((sum, sale) => sum + Number(sale.dueAmount || 0), 0)
+    const purchaseTotal = purchases.reduce((sum, row) => sum + Number(row.grandTotal || 0), 0)
+    const purchaseDue = purchases.reduce((sum, row) => sum + Math.max(Number(row.grandTotal || 0) - purchasePaid(row), 0), 0)
+    const purchasePaidTotal = purchases.reduce((sum, row) => sum + purchasePaid(row), 0)
+
+    return {
+      todaySalesCount: todaySales.length,
+      todaySalesAmount,
+      totalSalesAmount,
+      salesDue,
+      purchaseTotal,
+      purchaseDue,
+      purchasePaidTotal,
+      purchaseCount: purchases.length,
+      dueCustomers: sales.filter((sale) => Number(sale.dueAmount || 0) > 0).length,
+      dueVendors: purchases.filter((row) => Math.max(Number(row.grandTotal || 0) - purchasePaid(row), 0) > 0).length,
+    }
+  }, [sales, purchases])
+
+  const recentSales = sales.slice(0, 5)
+  const dueSales = sales.filter((sale) => Number(sale.dueAmount || 0) > 0).slice(0, 5)
+  const duePurchases = purchases
+    .map((row) => ({ ...row, due: Math.max(Number(row.grandTotal || 0) - purchasePaid(row), 0) }))
+    .filter((row) => row.due > 0)
+    .slice(0, 5)
+
+  const cashChartRef = useChart({
     type: 'doughnut',
     data: {
-      labels: ['In Stock', 'Low Stock', 'Out of Stock'],
+      labels: ['Sales Due', 'Purchase Paid', 'Purchase Due'],
       datasets: [{
-        data: [58, 12, 16],
-        backgroundColor: ['#16a34a', '#f97316', '#ED1C24'],
+        data: [summary.salesDue, summary.purchasePaidTotal, summary.purchaseDue],
+        backgroundColor: ['#ED1C24', '#16a34a', '#f97316'],
         borderWidth: 0,
-        hoverOffset: 6,
       }],
     },
     options: {
@@ -103,184 +86,105 @@ export default function Dashboard() {
       cutout: '68%',
       plugins: {
         legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (ctx) => ' ' + ctx.label + ': ' + ctx.parsed + ' (' + Math.round((ctx.parsed / 86) * 100) + '%)',
-          },
-        },
+        tooltip: { callbacks: { label: (ctx) => ` ${ctx.label}: ${formatCurrency(ctx.parsed)}` } },
       },
     },
   })
 
+  const statCards = [
+    { label: "Today's Sales", value: formatCurrency(summary.todaySalesAmount), note: `${summary.todaySalesCount} invoices today`, icon: 'fa-indian-rupee-sign', iconClass: 'icon-blue' },
+    { label: 'Sales Due', value: formatCurrency(summary.salesDue), note: `${summary.dueCustomers} customers pending`, icon: 'fa-user-clock', iconClass: 'icon-red', valueClass: 'text-danger' },
+    { label: 'Purchase Total', value: formatCurrency(summary.purchaseTotal), note: `${summary.purchaseCount} purchase entries`, icon: 'fa-truck-ramp-box', iconClass: 'icon-navy' },
+    { label: 'Purchase Due', value: formatCurrency(summary.purchaseDue), note: `${summary.dueVendors} vendors pending`, icon: 'fa-file-invoice-dollar', iconClass: 'icon-orange', valueClass: 'text-warning' },
+  ]
+
   return (
     <>
-      <Topbar title="Dashboard" subtitle="Welcome back, Admin!" />
+      <Topbar title="Dashboard" subtitle="Daily battery shop overview" />
 
-      {/* Summary Cards */}
       <div className="row g-3 mb-4">
-        {statCards.map((c) => (
-          <div className="col-md-6 col-xl-4 col-xxl-2" key={c.label}>
+        {statCards.map((card) => (
+          <div className="col-md-6 col-xl-3" key={card.label}>
             <div className="card-box stat-card">
               <div>
-                <small>{c.label}</small>
-                <h4 className={c.valueClass}>{c.value}</h4>
-                <span className={`stat-change ${c.changeType === 'up' ? 'up' : c.changeType === 'down' ? 'down' : c.changeType === 'orange' ? 'stat-orange' : 'stat-muted'}`}>
-                  {c.changeType === 'up' && <i className="fa-solid fa-arrow-up"></i>} {c.change}
-                </span>
+                <small>{card.label}</small>
+                <h4 className={card.valueClass}>{card.value}</h4>
+                <span className="stat-change stat-muted">{card.note}</span>
               </div>
-              <div className={`stat-icon ${c.iconClass}`}><i className={`fa-solid ${c.icon}`}></i></div>
+              <div className={`stat-icon ${card.iconClass}`}><i className={`fa-solid ${card.icon}`}></i></div>
             </div>
           </div>
         ))}
       </div>
 
-      {/* Charts Row */}
       <div className="row g-3 mb-4">
-        <div className="col-lg-5">
+        <div className="col-lg-4">
           <div className="card-box">
-            <div className="section-title">Sales Overview</div>
-            <div className="chart-wrap">
-              <canvas ref={salesChartRef}></canvas>
-            </div>
-          </div>
-        </div>
-
-        <div className="col-lg-3">
-          <div className="card-box">
-            <div className="section-title">Stock Status</div>
+            <div className="section-title">Money Position</div>
             <div className="donut-wrap">
-              <canvas ref={stockChartRef}></canvas>
+              <canvas ref={cashChartRef}></canvas>
             </div>
             <div className="donut-legend">
-              <div className="legend-item"><span className="legend-dot legend-green"></span>In Stock — 58 (67.4%)</div>
-              <div className="legend-item"><span className="legend-dot legend-orange"></span>Low Stock — 12 (14.0%)</div>
-              <div className="legend-item"><span className="legend-dot legend-red"></span>Out of Stock — 16 (18.6%)</div>
+              <div className="legend-item"><span className="legend-dot legend-red"></span>Sales Due - {formatCurrency(summary.salesDue)}</div>
+              <div className="legend-item"><span className="legend-dot legend-green"></span>Purchase Paid - {formatCurrency(summary.purchasePaidTotal)}</div>
+              <div className="legend-item"><span className="legend-dot legend-orange"></span>Purchase Due - {formatCurrency(summary.purchaseDue)}</div>
             </div>
           </div>
         </div>
 
         <div className="col-lg-4">
           <div className="card-box">
-            <div className="section-title">Recent Sales <a href="#!">View All</a></div>
-            {recentSales.map((s) => (
-              <div className="sale-item" key={s.inv}>
+            <div className="section-title">Pending Customer Payments <Link to="/sales">Open Sales</Link></div>
+            {dueSales.length ? dueSales.map((sale) => (
+              <div className="payment-item" key={sale.id || sale.invoice}>
                 <div>
-                  <div className="inv">{s.inv}</div>
-                  <div className="meta">{s.meta}</div>
+                  <strong>{sale.customer || 'Customer'}</strong><br />
+                  <small className="text-muted">{sale.invoice} | {sale.date || sale.invoiceDate}</small>
                 </div>
-                <span className={s.status === 'Paid' ? 'badge-paid' : 'badge-due'}>{s.status}</span>
+                <span className="payment-amount">{formatCurrency(sale.dueAmount)}</span>
               </div>
-            ))}
+            )) : <p className="text-muted mb-0">No customer dues recorded.</p>}
+          </div>
+        </div>
+
+        <div className="col-lg-4">
+          <div className="card-box">
+            <div className="section-title">Pending Purchase Dues <Link to="/purchase-stock">Open Purchase</Link></div>
+            {duePurchases.length ? duePurchases.map((row) => (
+              <div className="payment-item" key={row.id}>
+                <div>
+                  <strong>{row.company || 'Company'}</strong><br />
+                  <small className="text-muted">{row.date} | {row.items?.length || 0} models</small>
+                </div>
+                <span className="payment-amount">{formatCurrency(row.due)}</span>
+              </div>
+            )) : <p className="text-muted mb-0">No purchase dues recorded.</p>}
           </div>
         </div>
       </div>
 
-      {/* Tables Row */}
-      <div className="row g-3 mb-4">
-        <div className="col-lg-4">
-          <div className="card-box">
-            <div className="section-title">Low Stock Items <a href="#!">View All</a></div>
-            <div className="table-responsive">
-              <table className="table align-middle">
-                <thead>
-                  <tr><th>Product</th><th>Brand</th><th>Stock</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {lowStockItems.map((it) => (
-                    <tr key={it.product}>
-                      <td>
-                        <div className="product-cell">
-                          <div className="product-thumb"><i className="fa-solid fa-car-battery"></i></div>
-                          {it.product}
-                        </div>
-                      </td>
-                      <td>{it.brand}</td>
-                      <td className="stock-danger">{it.stock}</td>
-                      <td><span className={stockBadgeClass(it.status)}>{it.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div className="col-lg-4">
-          <div className="card-box">
-            <div className="section-title">Recent Purchases <a href="#!">View All</a></div>
-            <div className="table-responsive">
-              <table className="table align-middle">
-                <thead>
-                  <tr><th>Bill No.</th><th>Supplier</th><th>Amount</th><th>Status</th></tr>
-                </thead>
-                <tbody>
-                  {recentPurchases.map((p) => (
-                    <tr key={p.bill}>
-                      <td>{p.bill}</td>
-                      <td>{p.supplier}</td>
-                      <td>{p.amount}</td>
-                      <td><span className="badge-received">Received</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div className="col-lg-4">
-          <div className="card-box">
-            <div className="section-title">Top Selling Batteries <a href="#!">View All</a></div>
-            <div className="table-responsive">
-              <table className="table align-middle">
-                <thead>
-                  <tr><th>Product</th><th>Sold</th><th>Amount</th></tr>
-                </thead>
-                <tbody>
-                  {topSelling.map((p) => (
-                    <tr key={p.product}>
-                      <td>
-                        <div className="product-cell">
-                          <div className="product-thumb"><i className="fa-solid fa-car-battery"></i></div>
-                          {p.product}
-                        </div>
-                      </td>
-                      <td>{p.sold}</td>
-                      <td>{p.amount}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Row */}
       <div className="row g-3">
-        <div className="col-lg-4">
+        <div className="col-lg-8">
           <div className="card-box">
-            <div className="section-title">Pending Payments <a href="#!">View All</a></div>
-            {pendingPayments.map((p) => (
-              <div className="payment-item" key={p.name}>
-                <div>
-                  <strong>{p.name}</strong><br />
-                  <small className="text-muted">{p.since}</small>
-                </div>
-                <span className="payment-amount">{p.amount}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="col-lg-4">
-          <div className="card-box">
-            <div className="section-title">Warranty Summary</div>
-            <div className="warranty-grid">
-              <div className="warranty-mini ok"><h5>64</h5><small>Active Warranties</small></div>
-              <div className="warranty-mini warn"><h5>8</h5><small>Expiring Soon (30 Days)</small></div>
-              <div className="warranty-mini danger"><h5>5</h5><small>Expired</small></div>
-              <div className="warranty-mini"><h5>3</h5><small>Claims This Month</small></div>
+            <div className="section-title">Recent Sales <Link to="/sales">View All</Link></div>
+            <div className="table-responsive">
+              <table className="table align-middle">
+                <thead>
+                  <tr><th>Invoice</th><th>Customer</th><th>Battery</th><th>Amount</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  {recentSales.map((sale) => (
+                    <tr key={sale.id || sale.invoice}>
+                      <td>{sale.invoice}</td>
+                      <td>{sale.customer || '-'}</td>
+                      <td>{sale.brand || '-'} {sale.model || ''}</td>
+                      <td>{formatCurrency(sale.amount)}</td>
+                      <td><span className={Number(sale.dueAmount || 0) > 0 ? 'badge-due' : 'badge-paid'}>{Number(sale.dueAmount || 0) > 0 ? 'Due' : 'Paid'}</span></td>
+                    </tr>
+                  ))}
+                  {!recentSales.length && <tr><td colSpan="5" className="text-center text-muted py-4">No sales saved yet.</td></tr>}
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -289,12 +193,12 @@ export default function Dashboard() {
           <div className="card-box">
             <div className="section-title">Quick Actions</div>
             <div className="quick-actions">
+              <Link to="/stock" className="quick-btn"><i className="fa-solid fa-boxes-stacked"></i> Product Stock</Link>
+              <Link to="/purchase-stock" className="quick-btn"><i className="fa-solid fa-truck-ramp-box"></i> Add Purchase</Link>
               <Link to="/sales" className="quick-btn"><i className="fa-solid fa-cart-plus"></i> New Sale</Link>
-              <Link to="/products" className="quick-btn"><i className="fa-solid fa-plus"></i> Add Purchase</Link>
-              <Link to="/inventory" className="quick-btn"><i className="fa-solid fa-boxes-stacked"></i> Adjust Stock</Link>
-              <Link to="/reports" className="quick-btn"><i className="fa-solid fa-chart-line"></i> Sales Report</Link>
-              <Link to="/reports" className="quick-btn"><i className="fa-solid fa-warehouse"></i> Stock Report</Link>
-              <Link to="/settings" className="quick-btn"><i className="fa-solid fa-database"></i> Backup</Link>
+              <Link to="/scrap-stock" className="quick-btn"><i className="fa-solid fa-recycle"></i> Scrap Stock</Link>
+              <Link to="/reports" className="quick-btn"><i className="fa-solid fa-chart-line"></i> Reports</Link>
+              <Link to="/settings" className="quick-btn"><i className="fa-solid fa-gear"></i> Settings</Link>
             </div>
           </div>
         </div>

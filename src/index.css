@@ -244,11 +244,43 @@ body {
 /* ── Cards ── */
 .card-box {
   background: var(--kb-white);
-  border-radius: 14px;
+  border-radius: 8px;
   padding: 18px 20px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-  border: 1px solid #eef2f7;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.06);
+  border: 1px solid #e7edf5;
   height: 100%;
+}
+
+.card-box:hover {
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
+}
+
+.btn {
+  border-radius: 8px;
+  font-weight: 650;
+}
+
+.form-control,
+.form-select {
+  border-radius: 8px;
+  border-color: #dbe3ee;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--kb-blue);
+  box-shadow: 0 0 0 .18rem rgba(0, 174, 239, 0.14);
+}
+
+.modal-content {
+  border: 0;
+  border-radius: 8px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, 0.24);
+}
+
+.modal-header,
+.modal-footer {
+  border-color: #edf2f7;
 }
 
 .stat-card {
@@ -446,11 +478,42 @@ body {
   color: var(--kb-muted);
   border-bottom: 1px solid #e2e8f0;
   background: #f8fafc;
+  text-transform: uppercase;
+  letter-spacing: .02em;
 }
 
 .table td {
   vertical-align: middle;
   border-color: #f1f5f9;
+}
+
+.table tbody tr:hover {
+  background: #fbfdff;
+}
+
+.report-filter {
+  height: auto;
+}
+
+@media print {
+  .sidebar,
+  .topbar-right,
+  .report-filter,
+  .quick-actions,
+  .btn {
+    display: none !important;
+  }
+
+  .main {
+    margin-left: 0;
+    padding: 0;
+  }
+
+  .card-box {
+    box-shadow: none;
+    border: 1px solid #d9e0ea;
+    break-inside: avoid;
+  }
 }
 
 .product-cell {
@@ -473,6 +536,110 @@ body {
 }
 
 .stock-danger { color: var(--kb-red); font-weight: 700; }
+
+.brand-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 16px;
+  padding: 12px 0 4px;
+}
+
+.brand-card-button {
+  min-height: 105px;
+  padding: 20px;
+  border: 1px solid #edf0f5;
+  border-radius: 14px;
+  background: #fff;
+  color: #080808;
+  box-shadow: 0 5px 16px rgba(30, 42, 68, 0.08);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+
+.brand-card-button span {
+  font-size: clamp(1.25rem, 2vw, 1.9rem);
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+
+.brand-card-button small { color: #7c8798; font-weight: 600; }
+.brand-card-button:hover,
+.brand-card-button:focus-visible {
+  transform: translateY(-2px);
+  border-color: #1769e8;
+  box-shadow: 0 10px 24px rgba(23, 105, 232, 0.14);
+  outline: none;
+}
+
+.model-list-wrap {
+  border: 1px solid #edf0f5;
+  border-radius: 8px;
+  background: #fbfcff;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+
+.model-list-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.model-list-title span {
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.model-list-title small {
+  color: #64748b;
+  font-weight: 700;
+}
+
+.model-list-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.model-list-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px;
+  border: 1px solid #e6eaf1;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.model-list-item strong {
+  display: block;
+  color: #111827;
+  font-size: .92rem;
+  overflow-wrap: anywhere;
+}
+
+.model-list-item small {
+  display: block;
+  color: #7c8798;
+  font-weight: 600;
+  margin-top: 3px;
+}
+
+.model-list-item .btn {
+  flex-shrink: 0;
+}
 
 /* ── Pending Payments ── */
 .payment-item {

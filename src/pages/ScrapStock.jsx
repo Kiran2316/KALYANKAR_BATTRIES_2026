@@ -5,6 +5,7 @@ import mainLogo from '../assets/mainlogo.png'
 
 const SALES_STORAGE_KEY = 'kalyankar-sales'
 const SCRAP_SALES_STORAGE_KEY = 'kalyankar-scrap-sales'
+const SCRAP_PAYMENTS_STORAGE_KEY = 'kalyankar-scrap-company-payments'
 const SHOP = {
   name: 'Kalyankar Batteries',
   tagline: 'Certified With Excellent Quality',
@@ -63,6 +64,40 @@ function saleCategoryLabel(category) {
   return category === 'bike' ? 'Bike Batteries' : 'Car Batteries'
 }
 
+function companyLedgerRows(company) {
+  let runningAmount = 0
+  return [...(company?.sales || [])]
+    .sort((a, b) => String(a.timestamp || a.date || '').localeCompare(String(b.timestamp || b.date || '')))
+    .map((sale) => {
+      runningAmount += Number(sale.totalAmount || 0)
+      return { ...sale, runningAmount }
+    })
+}
+
+function companyPaymentLedger(company, payments) {
+  if (!company) return []
+  let balance = 0
+  const entries = company.sales.flatMap((sale) => {
+    const transactionDate = sale.timestamp || `${sale.date}T00:00:00`
+    const saleEntries = [{ ...sale, type: 'purchase', transactionDate, amount: Number(sale.totalAmount || 0) }]
+    if (Number(sale.paidAmount || 0) > 0) saleEntries.push({ id: `initial-${sale.id}`, saleId: sale.id, invoiceNo: sale.invoiceNo, date: sale.date, type: 'payment', transactionDate: `${transactionDate}-payment`, amount: Number(sale.paidAmount), method: 'At Sale' })
+    return saleEntries
+  })
+  entries.push(...payments.filter((payment) => payment.companyKey === company.key).map((payment) => ({ ...payment, type: 'payment', transactionDate: payment.timestamp })))
+  return entries.sort((a, b) => String(a.transactionDate).localeCompare(String(b.transactionDate))).map((entry) => {
+    if (entry.type === 'purchase') balance += Number(entry.amount || 0)
+    else balance -= Number(entry.amount || 0)
+    return { ...entry, balance: Math.max(0, balance) }
+  })
+}
+
+function saleRemainingDue(sale, companyKey, payments) {
+  const laterPayments = payments
+    .filter((payment) => payment.companyKey === companyKey && String(payment.saleId || '') === String(sale.id))
+    .reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+  return Math.max(0, Number(sale.totalAmount || 0) - Number(sale.paidAmount || 0) - laterPayments)
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replaceAll('&', '&amp;')
@@ -81,6 +116,7 @@ const emptySale = {
   quantity: '',
   weight: '',
   ratePerKg: '',
+  paidAmount: '',
   date: new Date().toISOString().split('T')[0],
   stockFromDate: '',
   stockToDate: '',
@@ -108,10 +144,15 @@ export default function ScrapStock() {
   )
   const [scrapSales, setScrapSales] = useState(() => readStorage(SCRAP_SALES_STORAGE_KEY))
   const [saleForm, setSaleForm] = useState(emptySale)
+  const [companyMode, setCompanyMode] = useState('new')
   const [activeStockDetails, setActiveStockDetails] = useState(null)
   const [detailSearch, setDetailSearch] = useState('')
   const [selectedSupplier, setSelectedSupplier] = useState(null)
   const [selectedCompany, setSelectedCompany] = useState(null)
+  const [selectedCompanySale, setSelectedCompanySale] = useState(null)
+  const [companyPayments, setCompanyPayments] = useState(() => readStorage(SCRAP_PAYMENTS_STORAGE_KEY))
+  const [paymentForm, setPaymentForm] = useState({ amount: '', method: 'Cash' })
+  const [selectedDueSaleId, setSelectedDueSaleId] = useState(null)
   const [customerForm, setCustomerForm] = useState(emptyCustomerForm)
   const [editingCustomerKey, setEditingCustomerKey] = useState(null)
 
@@ -337,15 +378,22 @@ export default function ScrapStock() {
     const reportWindow = window.open('', '_blank', 'width=1000,height=750')
     if (!reportWindow) return alert('Please allow pop-ups to print the report.')
     // Collection and sale dates belong to the in-app history only.
-    const rows = salesToPrint.map((sale, index) => `<tr><td>${index + 1}</td><td>${saleCategoryLabel(sale.category)}</td><td>${sale.quantity}</td><td>${formatNumber(sale.weight)} Kg</td><td>${formatMoney(sale.ratePerKg)}</td><td>${formatMoney(sale.totalAmount)}</td></tr>`).join('')
+    const rows = salesToPrint.map((sale, index) => {
+      const paid = Number(sale.paidAmount || 0) + companyPayments.filter((payment) => payment.companyKey === company.key && String(payment.saleId || '') === String(sale.id)).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+      const due = saleRemainingDue(sale, company.key, companyPayments)
+      return `<tr><td>${index + 1}</td><td>${escapeHtml(sale.date || '—')}</td><td>${saleCategoryLabel(sale.category)}</td><td>${sale.quantity}</td><td>${formatNumber(sale.weight)} Kg</td><td>${formatMoney(sale.ratePerKg)}</td><td>${formatMoney(sale.totalAmount)}</td><td>${formatMoney(paid)}</td><td>${formatMoney(due)}</td></tr>`
+    }).join('')
+    const ledgerRows = companyPaymentLedger(company, companyPayments).map((entry) => `<tr><td>${escapeHtml(entry.date || '—')}</td><td>${entry.type === 'purchase' ? `Purchase - ${escapeHtml(saleCategoryLabel(entry.category))}` : `Payment - ${escapeHtml(entry.method || 'Payment received')}`}</td><td>${entry.type === 'purchase' ? formatMoney(entry.amount) : '—'}</td><td>${entry.type === 'payment' ? formatMoney(entry.amount) : '—'}</td><td><strong>${formatMoney(entry.balance)}</strong></td></tr>`).join('')
+    const paymentHistory = singleSale ? '' : `<h3 style="margin:26px 0 10px">Purchase / Payment History</h3><table><thead><tr><th>Date</th><th>Description</th><th>Credit (Purchase)</th><th>Debit (Payment)</th><th>Balance</th></tr></thead><tbody>${ledgerRows}</tbody></table>`
 
     reportWindow.document.write(`<!doctype html><html><head><title>Company Scrap Sale - ${escapeHtml(company.name)}</title><style>
       *{box-sizing:border-box}body{font-family:Arial,sans-serif;color:#17213a;margin:0;padding:28px}.header{display:flex;align-items:center;justify-content:space-between;border-bottom:3px solid #1769e8;padding-bottom:18px}.logo{width:155px;max-height:78px;object-fit:contain}.shop{text-align:right}.shop h1{margin:0 0 5px;font-size:25px;color:#1769e8}.shop p{margin:3px 0;font-size:12px}.title{text-align:center;margin:25px 0 16px}.company{border:1px solid #dce3ed;border-radius:8px;padding:14px;margin-bottom:18px;display:grid;grid-template-columns:1fr 1fr;gap:8px}.company p{margin:0;font-size:13px}table{width:100%;border-collapse:collapse;font-size:10px}th{background:#edf3ff;color:#263653;text-align:left}th,td{border:1px solid #cfd8e6;padding:8px}.totals{margin-top:18px;margin-left:auto;width:330px;border:1px solid #cfd8e6;padding:12px}.totals div{display:flex;justify-content:space-between;padding:5px}.footer{text-align:center;border-top:1px solid #dce3ed;margin-top:35px;padding-top:12px;font-size:11px;color:#667085}@media print{body{padding:12px}}</style></head><body>
       <div class="header"><img class="logo" src="${mainLogo}"/><div class="shop"><h1>${SHOP.name}</h1><p>${SHOP.tagline}</p><p>${SHOP.address}</p><p>Phone: ${SHOP.phone} | Email: ${SHOP.email}</p><p>GSTIN: ${SHOP.gstin}</p></div></div>
       <div class="title"><h2>${singleSale ? 'Company Scrap Sale Receipt' : 'Company Scrap Purchase History'}</h2></div>
       <div class="company"><p><strong>Company:</strong> ${escapeHtml(company.name)}</p><p><strong>Contact:</strong> ${escapeHtml(company.contact || '—')}</p><p><strong>Address:</strong> ${escapeHtml(company.address || '—')}</p><p><strong>GSTIN:</strong> ${escapeHtml(company.gstin || '—')}</p></div>
-      <table><thead><tr><th>#</th><th>Category</th><th>Quantity</th><th>Weight</th><th>Rate/Kg</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>#</th><th>Date</th><th>Category</th><th>Quantity</th><th>Weight</th><th>Rate/Kg</th><th>Amount</th><th>Paid</th><th>Due</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="totals"><div><strong>Total Quantity</strong><strong>${totalQty}</strong></div><div><strong>Total Weight</strong><strong>${formatNumber(totalKg)} Kg</strong></div><div><strong>Total Amount</strong><strong>${formatMoney(totalAmount)}</strong></div></div>
+      ${paymentHistory}
       <div class="footer">System-generated scrap sale report from ${SHOP.name}. Contact: ${SHOP.phone}</div><script>window.onload=()=>{setTimeout(()=>window.print(),300)}</script></body></html>`)
     reportWindow.document.close()
   }
@@ -369,6 +417,23 @@ export default function ScrapStock() {
           }
         : {}),
       // The scrap rate must be entered again for every new stock cycle.
+      ratePerKg: '',
+    }))
+  }
+
+  function changeCompanyMode(mode) {
+    setCompanyMode(mode)
+    setSaleForm((previous) => ({ ...previous, company: '', contact: '', companyAddress: '', companyGstin: '', ratePerKg: '' }))
+  }
+
+  function selectExistingCompany(companyKey) {
+    const company = companyGroups.find((item) => item.key === companyKey)
+    setSaleForm((previous) => ({
+      ...previous,
+      company: company?.name || '',
+      contact: company?.contact || '',
+      companyAddress: company?.address || '',
+      companyGstin: company?.gstin || '',
       ratePerKg: '',
     }))
   }
@@ -398,6 +463,7 @@ export default function ScrapStock() {
       .filter(Boolean)
       .sort()
 
+    setCompanyMode(companyGroups.length ? 'existing' : 'new')
     setSaleForm({
       ...emptySale,
       category,
@@ -428,11 +494,14 @@ export default function ScrapStock() {
     const quantity = Number(available.availableQty || 0)
     const weight = Number(available.availableKg || 0)
     const ratePerKg = Number(saleForm.ratePerKg || 0)
+    const totalAmount = weight * ratePerKg
+    const paidAmount = Number(saleForm.paidAmount || 0)
 
     if (!saleForm.company.trim()) return alert('Please enter the company name.')
     if (quantity <= 0) return alert('Please enter a valid quantity.')
     if (weight <= 0) return alert('Please enter a valid weight in Kg.')
     if (ratePerKg <= 0) return alert('Please enter a valid rate per Kg.')
+    if (paidAmount < 0 || paidAmount > totalAmount) return alert('Paid amount cannot be more than the total sale amount.')
 
     const newSale = {
       id: Date.now(),
@@ -443,10 +512,14 @@ export default function ScrapStock() {
       companyGstin: saleForm.companyGstin.trim().toUpperCase(),
       vehicleNumber: saleForm.vehicleNumber.trim().toUpperCase(),
       notes: saleForm.notes.trim(),
+      invoiceNo: `SCRAP-${Date.now()}`,
+      timestamp: new Date().toISOString(),
       quantity,
       weight,
       ratePerKg,
-      totalAmount: weight * ratePerKg,
+      totalAmount,
+      paidAmount,
+      dueAmount: Math.max(0, totalAmount - paidAmount),
       cycleNumber: scrapSales.filter((sale) => sale.category === saleForm.category).length + 1,
       stockBreakdown: isCombined
         ? {
@@ -470,6 +543,47 @@ export default function ScrapStock() {
   function deleteScrapSale(id) {
     if (!window.confirm('Delete this scrap sale entry and return its stock?')) return
     saveScrapSales(scrapSales.filter((sale) => sale.id !== id))
+  }
+
+  const selectedCompanyLedger = companyLedgerRows(selectedCompany)
+  const selectedPaymentLedger = companyPaymentLedger(selectedCompany, companyPayments)
+  const selectedOutstanding = selectedPaymentLedger.at(-1)?.balance || 0
+  const selectedDueSale = selectedCompany?.sales.find((sale) => String(sale.id) === String(selectedDueSaleId))
+  const selectedTransactionDue = selectedDueSale ? saleRemainingDue(selectedDueSale, selectedCompany.key, companyPayments) : 0
+  const selectedSalePayments = selectedCompanySale ? [
+    ...(Number(selectedCompanySale.paidAmount || 0) > 0 ? [{ id: `initial-${selectedCompanySale.id}`, amount: Number(selectedCompanySale.paidAmount), date: selectedCompanySale.date, method: 'At Sale' }] : []),
+    ...companyPayments.filter((payment) => payment.companyKey === selectedCompany?.key && String(payment.saleId || '') === String(selectedCompanySale.id)),
+  ] : []
+  const selectedSalePaid = selectedSalePayments.reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+  const selectedSaleDueAmount = selectedCompanySale ? Math.max(0, Number(selectedCompanySale.totalAmount || 0) - selectedSalePaid) : 0
+  const selectedSaleStatus = selectedSaleDueAmount <= 0.005 ? 'Paid' : selectedSalePaid > 0 ? 'Partial' : 'Due'
+
+  function saveDuePayment(event) {
+    event.preventDefault()
+    if (!selectedCompany) return
+    const amount = Number(paymentForm.amount || 0)
+    if (amount <= 0) return alert('Please enter a valid payment amount.')
+    if (!selectedDueSale) return alert('Please select a transaction using its Pay Due button.')
+    if (amount > selectedTransactionDue + 0.005) return alert(`Payment cannot be more than this transaction's due amount ${formatMoney(selectedTransactionDue)}.`)
+    const now = new Date()
+    const paymentDate = now.toISOString().split('T')[0]
+    const nextPayments = [...companyPayments, {
+      id: Date.now(),
+      companyKey: selectedCompany.key,
+      saleId: selectedDueSale.id,
+      invoiceNo: selectedDueSale.invoiceNo || `SCRAP-${selectedDueSale.id}`,
+      date: paymentDate,
+      timestamp: now.toISOString(),
+      amount,
+      method: paymentForm.method,
+      notes: `Payment via ${paymentForm.method}`,
+    }]
+    localStorage.setItem(SCRAP_PAYMENTS_STORAGE_KEY, JSON.stringify(nextPayments))
+    setCompanyPayments(nextPayments)
+    setPaymentForm({ amount: '', method: 'Cash' })
+    setSelectedDueSaleId(null)
+    const paymentModal = document.getElementById('scrapDuePaymentModal')
+    if (paymentModal && window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(paymentModal).hide()
   }
 
   return (
@@ -514,6 +628,15 @@ export default function ScrapStock() {
         .scrap-pill { display: inline-flex; padding: 5px 9px; border-radius: 20px; background: #e9f8ef; color: #168447; font-size: 12px; font-weight: 700; }
         .supplier-avatar { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: #eaf2ff; color: #1769e8; }
         .scrap-empty { padding: 42px 20px; text-align: center; color: #7a879c; }
+        .scrap-detail-card { border: 1px solid #dce3ee; border-radius: 10px; background: #fff; padding: 16px; }
+        .scrap-detail-title { position: relative; margin-bottom: 12px; padding-bottom: 12px; color: #26344b; font-size: 13px; font-weight: 700; }
+        .scrap-detail-title::after { content: ''; position: absolute; left: 0; bottom: 0; width: 20px; height: 2px; background: #1769e8; }
+        .scrap-detail-title.green::after { background: #1aa34a; }
+        .scrap-detail-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 9px 0; border-bottom: 1px solid #e8edf4; font-size: 12px; }
+        .scrap-detail-row:last-child { border-bottom: 0; }
+        .scrap-detail-row span { color: #71809a; }
+        .scrap-detail-row strong { color: #27354d; text-align: right; }
+        .scrap-status { display: inline-flex; min-width: 48px; justify-content: center; padding: 4px 12px; border-radius: 20px; font-size: 10px; }
         @media (max-width: 900px) { .scrap-category-row { grid-template-columns: 1fr 1fr; } .scrap-stat-box { border-left: 0; padding-left: 0; } }
       `}</style>
 
@@ -576,23 +699,34 @@ export default function ScrapStock() {
 
         <section className="scrap-panel">
           <div className="scrap-panel-head">
-            <div><h5>Scrap Sold to Companies</h5><small className="scrap-muted">Bike and car stock are sold together in one complete sale</small></div>
+            <div><h5>Scrap Sold to Companies</h5><small className="scrap-muted">Every old-stock sale is shown as a separate company transaction</small></div>
             <div className="d-flex align-items-center gap-3 flex-wrap">
               <span className="scrap-muted">{companyGroups.length} companies · {scrapSales.length} sales</span>
-              <button disabled={totalStock.quantity <= 0 || totalStock.weight <= 0} className="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addScrapSaleModal" onClick={() => openCompanySale('all')}><i className="fa-solid fa-truck me-2"></i>Sell All Scrap to Company</button>
+              <button disabled={totalStock.quantity <= 0 || totalStock.weight <= 0} className="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addScrapSaleModal" onClick={() => openCompanySale('all')}><i className="fa-solid fa-truck me-2"></i>Sell Old Stock</button>
             </div>
           </div>
           <div className="table-responsive">
-            <table className="table scrap-table">
-              <thead><tr><th>Company</th><th>Contact / GSTIN</th><th>Purchases</th><th>Total Quantity</th><th>Total Weight</th><th>Total Amount</th><th>Actions</th></tr></thead>
-              <tbody>{companyGroups.map((company) => (
-                <tr key={company.key}>
-                  <td><strong>{company.name}</strong><div className="scrap-muted small">{company.address || '—'}</div></td><td>{company.contact || '—'}<div className="scrap-muted small">{company.gstin || ''}</div></td><td>{company.sales.length}</td><td>{company.totalQty}</td><td><strong>{formatNumber(company.totalKg)} Kg</strong></td><td><strong>{formatMoney(company.totalAmount)}</strong></td>
-                  <td><div className="d-flex gap-2"><button className="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#companyHistoryModal" onClick={() => setSelectedCompany(company)}><i className="fa-solid fa-eye me-1"></i>See</button><button className="btn btn-sm btn-primary" onClick={() => printCompanyReport(company)}><i className="fa-solid fa-print me-1"></i>Print History</button></div></td>
+            <table className="table scrap-table align-middle">
+              <thead><tr><th>Date</th><th>Company</th><th>Address / Phone</th><th>Scrap Type</th><th>Quantity</th><th>Weight</th><th>Rate / Kg</th><th>Total Amount</th><th>Paid Amount</th><th>Due Amount</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody>{scrapSales.map((sale) => {
+                const key = String(sale.companyGstin || sale.contact || sale.company || '').trim().toLowerCase()
+                const company = companyGroups.find((item) => item.key === key)
+                const due = company ? saleRemainingDue(sale, company.key, companyPayments) : Math.max(0, Number(sale.totalAmount || 0) - Number(sale.paidAmount || 0))
+                const laterPaid = companyPayments.filter((payment) => payment.companyKey === company?.key && String(payment.saleId || '') === String(sale.id)).reduce((sum, payment) => sum + Number(payment.amount || 0), 0)
+                const paid = Number(sale.paidAmount || 0) + laterPaid
+                const status = due <= 0.005 ? 'Paid' : paid > 0 ? 'Partial' : 'Due'
+                return <tr key={sale.id}>
+                  <td><strong>{sale.date || '—'}</strong><div className="scrap-muted small">{sale.timestamp ? new Date(sale.timestamp).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}</div></td>
+                  <td><button type="button" className="btn btn-link p-0 fw-bold text-decoration-none" data-bs-toggle="modal" data-bs-target="#companyHistoryModal" onClick={() => { setSelectedCompany(company); setSelectedCompanySale(sale); setSelectedDueSaleId(null) }}>{sale.company}</button><div className="scrap-muted small">{sale.invoiceNo || `SCRAP-${sale.id}`}</div></td>
+                  <td>{sale.companyAddress || '—'}<div className="scrap-muted small">{sale.contact || '—'}{sale.companyGstin ? ` · ${sale.companyGstin}` : ''}</div></td>
+                  <td><strong>{saleCategoryLabel(sale.category)}</strong></td>
+                  <td>{sale.quantity} Qty</td><td><strong>{formatNumber(sale.weight)} Kg</strong></td><td>{formatMoney(sale.ratePerKg)}</td><td><strong>{formatMoney(sale.totalAmount)}</strong></td><td className="text-success">{formatMoney(paid)}</td><td className="text-danger fw-bold">{formatMoney(due)}</td>
+                  <td><span className={`badge rounded-pill px-3 ${status === 'Paid' ? 'text-bg-success' : status === 'Partial' ? 'text-bg-warning' : 'text-bg-danger'}`}>{status}</span></td>
+                  <td><div className="d-flex gap-2"><button className="btn btn-sm btn-outline-primary" title="See scrap sale details" data-bs-toggle="modal" data-bs-target="#companyHistoryModal" onClick={() => { setSelectedCompany(company); setSelectedCompanySale(sale); setSelectedDueSaleId(null) }}><i className="fa-solid fa-eye me-1"></i>See</button><button className="btn btn-sm btn-outline-secondary" title="Open company ledger" data-bs-toggle="modal" data-bs-target="#scrapCompanyLedgerModal" onClick={() => { setSelectedCompany(company); setSelectedDueSaleId(null) }}><i className="fa-solid fa-book-open me-1"></i>Ledger</button>{due > 0.005 && <button className="btn btn-sm btn-outline-success" title="Record payment" data-bs-toggle="modal" data-bs-target="#scrapDuePaymentModal" onClick={() => { setSelectedCompany(company); setSelectedDueSaleId(sale.id); setPaymentForm({ amount: '', method: 'Cash' }) }}><i className="fa-solid fa-money-bill-wave"></i></button>}<button className="btn btn-sm btn-outline-primary" title="Print sale" onClick={() => printCompanyReport(company, sale)}><i className="fa-solid fa-print"></i></button><button className="btn btn-sm btn-outline-danger" title="Delete sale" onClick={() => deleteScrapSale(sale.id)}><i className="fa-solid fa-trash"></i></button></div></td>
                 </tr>
-              ))}</tbody>
+              })}</tbody>
             </table>
-            {companyGroups.length === 0 && <div className="scrap-empty">No company scrap sales have been added yet.</div>}
+            {scrapSales.length === 0 && <div className="scrap-empty">No company scrap sales have been added yet.</div>}
           </div>
         </section>
       </main>
@@ -623,17 +757,22 @@ export default function ScrapStock() {
       <div className="modal fade" id="addScrapSaleModal" tabIndex="-1" aria-hidden="true">
         <div className="modal-dialog modal-lg modal-dialog-centered"><div className="modal-content border-0 rounded-4">
           <form onSubmit={submitScrapSale}>
-            <div className="modal-header"><div><h5 className="modal-title fw-bold">Sell Scrap to Company</h5><small className="text-muted">Enter company information and rate; stock details are automatic</small></div><button type="button" className="btn-close" data-bs-dismiss="modal"></button></div>
+            <div className="modal-header"><div><h5 className="modal-title fw-bold">Sell Old Stock</h5><small className="text-muted">All available bike and car stock is included automatically</small></div><button type="button" className="btn-close" data-bs-dismiss="modal"></button></div>
             <div className="modal-body"><div className="row g-3">
-              <div className="col-md-6"><label className="form-label">Company Name *</label><input className="form-control" list="scrapCompanyOptions" required value={saleForm.company} onChange={(e) => updateCompanySelection(e.target.value)} placeholder="Select or enter company" /><datalist id="scrapCompanyOptions">{companyGroups.map((company) => <option key={company.key} value={company.name}>{company.contact}</option>)}</datalist><small className="text-muted">Selecting an existing company fills its saved details automatically.</small></div>
-              <div className="col-md-6"><label className="form-label">Contact Number *</label><input className="form-control" required value={saleForm.contact} onChange={(e) => updateSaleForm('contact', e.target.value)} /></div>
-              <div className="col-md-8"><label className="form-label">Company Address</label><input className="form-control" value={saleForm.companyAddress} onChange={(e) => updateSaleForm('companyAddress', e.target.value)} /></div>
-              <div className="col-md-4"><label className="form-label">Company GSTIN</label><input className="form-control text-uppercase" maxLength="15" value={saleForm.companyGstin} onChange={(e) => updateSaleForm('companyGstin', e.target.value)} /></div>
+              <div className="col-12"><div className="d-flex gap-2 p-1 bg-light rounded-3"><button type="button" className={`btn flex-fill ${companyMode === 'existing' ? 'btn-primary' : 'btn-light'}`} disabled={!companyGroups.length} onClick={() => changeCompanyMode('existing')}><i className="fa-solid fa-building-circle-check me-2"></i>Existing Company</button><button type="button" className={`btn flex-fill ${companyMode === 'new' ? 'btn-primary' : 'btn-light'}`} onClick={() => changeCompanyMode('new')}><i className="fa-solid fa-building-circle-arrow-right me-2"></i>New Company</button></div></div>
+              {companyMode === 'existing' && companyGroups.length > 0 ? <>
+                <div className="col-12"><label className="form-label">Select Saved Company *</label><select className="form-select" required value={companyGroups.find((company) => company.name === saleForm.company)?.key || ''} onChange={(e) => selectExistingCompany(e.target.value)}><option value="">Select selling company</option>{companyGroups.map((company) => <option key={company.key} value={company.key}>{company.name} - {company.contact || 'No contact'}</option>)}</select><small className="text-muted">Saved company information is filled automatically.</small></div>
+                <div className="col-md-6"><label className="form-label">Company Name</label><input className="form-control" readOnly value={saleForm.company} /></div><div className="col-md-6"><label className="form-label">Contact Number</label><input className="form-control" readOnly value={saleForm.contact} /></div><div className="col-md-8"><label className="form-label">Company Address</label><input className="form-control" readOnly value={saleForm.companyAddress} /></div><div className="col-md-4"><label className="form-label">Company GSTIN</label><input className="form-control" readOnly value={saleForm.companyGstin} /></div>
+              </> : <>
+                <div className="col-md-6"><label className="form-label">Company Name *</label><input className="form-control" required value={saleForm.company} onChange={(e) => updateCompanySelection(e.target.value)} placeholder="Enter new company name" /></div><div className="col-md-6"><label className="form-label">Contact Number *</label><input className="form-control" required value={saleForm.contact} onChange={(e) => updateSaleForm('contact', e.target.value.replace(/\D/g, ''))} placeholder="Enter contact number" /></div><div className="col-md-8"><label className="form-label">Company Address</label><input className="form-control" value={saleForm.companyAddress} onChange={(e) => updateSaleForm('companyAddress', e.target.value)} placeholder="Enter company address" /></div><div className="col-md-4"><label className="form-label">Company GSTIN</label><input className="form-control text-uppercase" maxLength="15" value={saleForm.companyGstin} onChange={(e) => updateSaleForm('companyGstin', e.target.value)} placeholder="Optional" /></div><div className="col-12"><small className="text-muted">This company will be saved after the scrap sale and available under Existing Company next time.</small></div>
+              </>}
               <div className="col-md-6"><label className="form-label">Rate per Kg (₹) *</label><input type="number" min="0.01" step="0.01" className="form-control" required value={saleForm.ratePerKg} onChange={(e) => updateSaleForm('ratePerKg', e.target.value)} /></div>
               <div className="col-md-6"><label className="form-label">Automatic Total Amount</label><input className="form-control" readOnly value={formatMoney(Number(saleForm.weight || 0) * Number(saleForm.ratePerKg || 0))} /></div>
+              <div className="col-md-6"><label className="form-label">Amount Paid by Company</label><input type="number" min="0" step="0.01" className="form-control" value={saleForm.paidAmount} onChange={(e) => updateSaleForm('paidAmount', e.target.value)} placeholder="Enter received amount" /><small className="text-muted">Enter 0 when no payment is received.</small></div>
+              <div className="col-md-6"><label className="form-label">Automatic Due Amount</label><input className="form-control fw-bold text-danger" readOnly value={formatMoney(Math.max(0, Number(saleForm.weight || 0) * Number(saleForm.ratePerKg || 0) - Number(saleForm.paidAmount || 0)))} /><small className="text-muted">Total amount minus the amount paid.</small></div>
               <div className="col-12"><div className="p-3 rounded-3 bg-light"><div className="row g-2"><div className="col-md-3"><small className="text-muted">Stock Included</small><strong className="d-block">{saleCategoryLabel(saleForm.category)}</strong></div><div className="col-md-3"><small className="text-muted">Total Quantity</small><strong className="d-block">{saleForm.quantity} Qty</strong></div><div className="col-md-3"><small className="text-muted">Total Weight</small><strong className="d-block">{formatNumber(saleForm.weight)} Kg</strong></div><div className="col-md-3"><small className="text-muted">Stock Period</small><strong className="d-block">{saleForm.stockFromDate || '—'} to {saleForm.stockToDate || '—'}</strong></div></div>{saleForm.category === 'all' && <div className="mt-2 pt-2 border-top small text-muted">Bike: <strong>{stock.bike.availableQty} Qty / {formatNumber(stock.bike.availableKg)} Kg</strong> &nbsp; + &nbsp; Car: <strong>{stock.other.availableQty} Qty / {formatNumber(stock.other.availableKg)} Kg</strong></div>}</div></div>
             </div></div>
-            <div className="modal-footer"><button type="button" className="btn btn-light" data-bs-dismiss="modal">Cancel</button><button type="submit" className="btn btn-primary"><i className="fa-solid fa-check me-2"></i>Complete Company Sale</button></div>
+            <div className="modal-footer"><button type="button" className="btn btn-light" data-bs-dismiss="modal">Cancel</button><button type="submit" className="btn btn-primary"><i className="fa-solid fa-check me-2"></i>Complete Old Stock Sale</button></div>
           </form>
         </div></div>
       </div>
@@ -652,12 +791,47 @@ export default function ScrapStock() {
       </div>
 
       <div className="modal fade" id="companyHistoryModal" tabIndex="-1" aria-hidden="true">
+        <div className="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable"><div className="modal-content border-0 rounded-4">
+          <div className="modal-header"><h5 className="modal-title fw-bold"><i className="fa-solid fa-file-invoice text-primary me-2"></i>Scrap Sale Details</h5><button type="button" className="btn-close" data-bs-dismiss="modal"></button></div>
+          <div className="modal-body">{selectedCompanySale && <div className="row g-3">
+            <div className="col-md-6"><div className="scrap-detail-card h-100"><div className="scrap-detail-title">Company and Invoice</div><div className="scrap-detail-row"><span>Invoice Number</span><strong>{selectedCompanySale.invoiceNo || `SCRAP-${selectedCompanySale.id}`}</strong></div><div className="scrap-detail-row"><span>Company</span><strong>{selectedCompanySale.company || '—'}</strong></div><div className="scrap-detail-row"><span>Phone</span><strong>{selectedCompanySale.contact || '—'}</strong></div><div className="scrap-detail-row"><span>Address</span><strong>{selectedCompanySale.companyAddress || '—'}</strong></div><div className="scrap-detail-row"><span>GSTIN</span><strong>{selectedCompanySale.companyGstin || '—'}</strong></div><div className="scrap-detail-row"><span>Date</span><strong>{selectedCompanySale.date || '—'}</strong></div><div className="scrap-detail-row"><span>Status</span><strong><span className={`scrap-status ${selectedSaleStatus === 'Paid' ? 'text-bg-success' : selectedSaleStatus === 'Partial' ? 'text-bg-warning' : 'text-bg-danger'}`}>{selectedSaleStatus}</span></strong></div></div></div>
+            <div className="col-md-6"><div className="scrap-detail-card h-100"><div className="scrap-detail-title green">Scrap Stock Details</div><div className="scrap-detail-row"><span>Scrap Type</span><strong>{saleCategoryLabel(selectedCompanySale.category)}</strong></div><div className="scrap-detail-row"><span>Quantity</span><strong>{selectedCompanySale.quantity} Qty</strong></div><div className="scrap-detail-row"><span>Total Weight</span><strong>{formatNumber(selectedCompanySale.weight)} Kg</strong></div><div className="scrap-detail-row"><span>Stock From</span><strong>{selectedCompanySale.stockFromDate || '—'}</strong></div><div className="scrap-detail-row"><span>Stock Until</span><strong>{selectedCompanySale.stockToDate || '—'}</strong></div>{selectedCompanySale.stockBreakdown && <><div className="scrap-detail-row"><span>Bike Batteries</span><strong>{selectedCompanySale.stockBreakdown.bikeQty || 0} Qty / {formatNumber(selectedCompanySale.stockBreakdown.bikeKg)} Kg</strong></div><div className="scrap-detail-row"><span>Car Batteries</span><strong>{selectedCompanySale.stockBreakdown.carQty || 0} Qty / {formatNumber(selectedCompanySale.stockBreakdown.carKg)} Kg</strong></div></>}</div></div>
+            <div className="col-12"><div className="scrap-detail-card"><div className="scrap-detail-title">Payment Summary</div><div className="scrap-detail-row"><span>Quantity</span><strong>{selectedCompanySale.quantity} Qty</strong></div><div className="scrap-detail-row"><span>Weight</span><strong>{formatNumber(selectedCompanySale.weight)} Kg</strong></div><div className="scrap-detail-row"><span>Rate per Kg</span><strong>{formatMoney(selectedCompanySale.ratePerKg)}</strong></div><div className="scrap-detail-row"><span>Paid Amount</span><strong className="text-success">{formatMoney(selectedSalePaid)}</strong></div><div className="scrap-detail-row"><span>Due Amount</span><strong className="text-danger">{formatMoney(selectedSaleDueAmount)}</strong></div><div className="scrap-detail-row"><span className="fw-bold">Grand Total</span><strong className="text-primary fs-5">{formatMoney(selectedCompanySale.totalAmount)}</strong></div></div></div>
+            <div className="col-12"><div className="scrap-detail-card"><div className="scrap-detail-title">Payment History</div>{selectedSalePayments.length ? <div className="table-responsive"><table className="table table-sm mb-0"><thead><tr><th>#</th><th>Amount Paid</th><th>Date Paid</th><th>Method</th></tr></thead><tbody>{selectedSalePayments.map((payment, index) => <tr key={payment.id || index}><td>{index + 1}</td><td>{formatMoney(payment.amount)}</td><td>{payment.date || '—'}</td><td>{payment.method || '—'}</td></tr>)}</tbody></table></div> : <p className="text-muted mb-0">No payments recorded yet.</p>}</div></div>
+          </div>}</div>
+          <div className="modal-footer"><button className="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>{selectedCompanySale && selectedSaleDueAmount > 0.005 && <button className="btn btn-success" data-bs-toggle="modal" data-bs-target="#scrapDuePaymentModal" onClick={() => { setSelectedDueSaleId(selectedCompanySale.id); setPaymentForm({ amount: '', method: 'Cash' }) }}><i className="fa-solid fa-money-bill-wave me-2"></i>Record Payment</button>}<button className="btn btn-primary" onClick={() => printCompanyReport(selectedCompany, selectedCompanySale)}><i className="fa-solid fa-print me-2"></i>Print Invoice</button></div>
+        </div></div>
+      </div>
+
+      <div className="modal fade" id="scrapCompanyLedgerModal" tabIndex="-1" aria-hidden="true">
         <div className="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable"><div className="modal-content border-0 rounded-4">
-          <div className="modal-header"><div><h5 className="modal-title fw-bold">{selectedCompany?.name || 'Company'} — Scrap Purchase History</h5><small className="text-muted">{selectedCompany?.sales.length || 0} purchases · {formatNumber(selectedCompany?.totalKg)} Kg · {formatMoney(selectedCompany?.totalAmount)}</small></div><button type="button" className="btn-close" data-bs-dismiss="modal"></button></div>
-          <div className="modal-body"><div className="p-3 bg-light rounded-3 mb-3"><strong>Contact:</strong> {selectedCompany?.contact || '—'} &nbsp; | &nbsp; <strong>GSTIN:</strong> {selectedCompany?.gstin || '—'}<br/><strong>Address:</strong> {selectedCompany?.address || '—'}</div>
-            <div className="table-responsive"><table className="table scrap-table"><thead><tr><th>Stock Added From</th><th>Stock Added Until</th><th>Sold On</th><th>Category</th><th>Quantity</th><th>Weight</th><th>Rate / Kg</th><th>Total</th><th></th></tr></thead><tbody>{selectedCompany?.sales.map((sale) => <tr key={sale.id}><td>{sale.stockFromDate || '—'}</td><td>{sale.stockToDate || '—'}</td><td>{sale.date || '—'}</td><td>{saleCategoryLabel(sale.category)}</td><td>{sale.quantity}</td><td>{formatNumber(sale.weight)} Kg</td><td>{formatMoney(sale.ratePerKg)}</td><td><strong>{formatMoney(sale.totalAmount)}</strong></td><td><div className="d-flex gap-2"><button className="btn btn-sm btn-primary" onClick={() => printCompanyReport(selectedCompany, sale)}><i className="fa-solid fa-print me-1"></i>Print</button><button className="btn btn-sm btn-outline-danger" onClick={() => deleteScrapSale(sale.id)}><i className="fa-solid fa-trash"></i></button></div></td></tr>)}</tbody></table></div>
+          <div className="modal-header"><h5 className="modal-title fw-bold"><i className="fa-solid fa-file-invoice text-primary me-2"></i>Company Details</h5><button type="button" className="btn-close" data-bs-dismiss="modal"></button></div>
+          <div className="modal-body">
+            <table className="table table-sm mb-4"><tbody><tr><th style={{width:'35%'}}>Company Name</th><td>{selectedCompany?.name || '—'}</td></tr><tr><th>Address</th><td>{selectedCompany?.address || '—'}</td></tr><tr><th>Contact</th><td>{selectedCompany?.contact || '—'}</td></tr><tr><th>GSTIN</th><td>{selectedCompany?.gstin || '—'}</td></tr></tbody></table>
+            <h5 className="fw-bold mb-2">Scrap Purchased</h5>
+            <div className="table-responsive mb-4"><table className="table scrap-table"><thead><tr><th>Date</th><th>Scrap Type</th><th>Qty</th><th>Weight</th><th>Rate</th><th>Final Total</th><th>Credit (Paid)</th><th>Debit (Due)</th><th>Status</th><th>Action</th></tr></thead><tbody>{selectedCompanyLedger.map((sale) => { const paid = Number(sale.paidAmount || 0) + companyPayments.filter((payment) => payment.companyKey === selectedCompany?.key && String(payment.saleId || '') === String(sale.id)).reduce((sum, payment) => sum + Number(payment.amount || 0), 0); const due = saleRemainingDue(sale, selectedCompany?.key, companyPayments); const status = due <= 0.005 ? 'Paid' : paid > 0 ? 'Partial' : 'Due'; return <tr key={sale.id}><td>{sale.date || '—'}</td><td>{saleCategoryLabel(sale.category)}</td><td>{sale.quantity}</td><td>{formatNumber(sale.weight)} Kg</td><td>{formatMoney(sale.ratePerKg)}</td><td><strong>{formatMoney(sale.totalAmount)}</strong></td><td>{formatMoney(paid)}</td><td>{formatMoney(due)}</td><td><span className={`badge rounded-pill ${status === 'Paid' ? 'text-bg-success' : status === 'Partial' ? 'text-bg-warning' : 'text-bg-danger'}`}>{status}</span></td><td><div className="d-flex gap-2">{due > 0.005 && <button className="btn btn-sm btn-outline-success" data-bs-toggle="modal" data-bs-target="#scrapDuePaymentModal" onClick={() => { setSelectedDueSaleId(sale.id); setPaymentForm({ amount: '', method: 'Cash' }) }}><i className="fa-solid fa-money-bill-wave me-1"></i>Pay Due</button>}<button className="btn btn-sm btn-outline-secondary" title="Print this purchase" onClick={() => printCompanyReport(selectedCompany, sale)}><i className="fa-solid fa-print"></i></button></div></td></tr> })}</tbody></table></div>
+            <h5 className="fw-bold mb-2">Purchase / Payment History</h5>
+            <div className="table-responsive"><table className="table scrap-table"><thead><tr><th>Date</th><th>Description</th><th>Credit (Purchase)</th><th>Debit (Payment)</th><th>Balance</th></tr></thead><tbody>{selectedPaymentLedger.map((entry) => <tr key={`${entry.type}-${entry.id}`}><td>{entry.date || '—'}</td><td>{entry.type === 'purchase' ? `Purchase - ${saleCategoryLabel(entry.category)} (${entry.invoiceNo || `SCRAP-${entry.id}`})` : `Payment - ${entry.method || 'Payment received'}`}</td><td>{entry.type === 'purchase' ? formatMoney(entry.amount) : '—'}</td><td>{entry.type === 'payment' ? formatMoney(entry.amount) : '—'}</td><td className="fw-bold">{formatMoney(entry.balance)}</td></tr>)}</tbody></table></div>
           </div>
-          <div className="modal-footer"><button className="btn btn-light" data-bs-dismiss="modal">Close</button><button className="btn btn-primary" onClick={() => printCompanyReport(selectedCompany)}><i className="fa-solid fa-print me-2"></i>Print Full History</button></div>
+          <div className="modal-footer"><button type="button" className="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button><button className="btn btn-primary" onClick={() => printCompanyReport(selectedCompany)}><i className="fa-solid fa-print me-2"></i>Print Full Ledger</button></div>
+        </div></div>
+      </div>
+
+      <div className="modal fade" id="scrapDuePaymentModal" tabIndex="-1" aria-hidden="true">
+        <div className="modal-dialog modal-dialog-centered"><div className="modal-content border-0 rounded-4 overflow-hidden">
+          <form onSubmit={saveDuePayment}>
+            <div className="modal-header px-4 py-3"><h5 className="modal-title fw-bold"><i className="fa-solid fa-money-bill-wave text-success me-2"></i>Record Payment</h5><button type="button" className="btn-close" data-bs-dismiss="modal"></button></div>
+            <div className="modal-body p-4">
+              <h5 className="fw-bold mb-3">{selectedDueSale?.invoiceNo || (selectedDueSale ? `SCRAP-${selectedDueSale.id}` : 'Scrap Sale')} <span className="text-muted fw-normal">— {selectedCompany?.name || 'Company'}</span></h5>
+              <div className="text-danger fs-5 mb-4">Current Due: {formatMoney(selectedTransactionDue)}</div>
+              <label className="form-label fw-bold">Amount Paying Now (₹) <span className="text-danger">*</span></label>
+              <input autoFocus type="number" min="0.01" max={selectedTransactionDue || undefined} step="0.01" required className="form-control form-control-lg mb-4" value={paymentForm.amount} onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })} />
+              <label className="form-label fw-bold">Payment Method <span className="text-danger">*</span></label>
+              <select className="form-select form-select-lg" required value={paymentForm.method} onChange={(e) => setPaymentForm({ ...paymentForm, method: e.target.value })}><option>Cash</option><option>UPI</option><option>Card</option><option>Bank Transfer</option><option>Cheque</option><option>Other</option></select>
+              <small className="text-muted d-block mt-2">Today's date will be recorded automatically as the payment date.</small>
+            </div>
+            <div className="modal-footer px-4 py-3"><button type="button" className="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" className="btn btn-success"><i className="fa-solid fa-check me-2"></i>Save Payment</button></div>
+          </form>
         </div></div>
       </div>
     </>

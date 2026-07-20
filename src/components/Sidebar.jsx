@@ -3,8 +3,8 @@ import logo from '../assets/logo.png'
 
 const navItems = [
   { to: '/', icon: 'fa-gauge-high', label: 'Dashboard', end: true },
-  { to: '/products', icon: 'fa-battery-full', label: 'Purchase' },
   { to: '/stock', icon: 'fa-boxes-stacked', label: 'Product Stock' },
+  { to: '/purchase-stock', icon: 'fa-truck-ramp-box', label: 'Purchase Stock' },
   { to: '/sales', icon: 'fa-cart-shopping', label: 'Sales' },
   { to: '/scrap-stock', icon: 'fa-recycle', label: 'Scrap Stock' },
   { to: '/inventory', icon: 'fa-warehouse', label: 'Inventory' },
