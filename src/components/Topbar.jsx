@@ -1,5 +1,8 @@
+import { useLanguage } from '../language.jsx'
+
 export default function Topbar({ title, subtitle }) {
-  const today = new Date().toLocaleDateString('en-IN', {
+  const { language, setLanguage, theme, setTheme, t } = useLanguage()
+  const today = new Date().toLocaleDateString(language === 'mr' ? 'mr-IN' : 'en-IN', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
@@ -9,8 +12,8 @@ export default function Topbar({ title, subtitle }) {
   return (
     <div className="topbar">
       <div>
-        <h4>{title}</h4>
-        <small className="text-muted">{subtitle}</small>
+        <h4>{t(title)}</h4>
+        <small className="text-muted">{t(subtitle)}</small>
       </div>
 
       <div className="topbar-right">
@@ -20,8 +23,32 @@ export default function Topbar({ title, subtitle }) {
         </div>
         <div className="user-profile">
           <div className="user-avatar"><i className="fa-solid fa-user"></i></div>
-          Admin <i className="fa-solid fa-chevron-down ms-1 chevron-muted"></i>
+          {t('Admin')} <i className="fa-solid fa-chevron-down ms-1 chevron-muted"></i>
         </div>
+        <div className="language-toggle" aria-label="Language switch">
+          <button
+            type="button"
+            className={language === 'en' ? 'active' : ''}
+            onClick={() => setLanguage('en')}
+          >
+            EN
+          </button>
+          <button
+            type="button"
+            className={language === 'mr' ? 'active' : ''}
+            onClick={() => setLanguage('mr')}
+          >
+            मराठी
+          </button>
+        </div>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+          title={theme === 'dark' ? 'Light mode' : 'Dark mode'}
+        >
+          <i className={`fa-solid ${theme === 'dark' ? 'fa-sun' : 'fa-moon'}`}></i>
+        </button>
       </div>
     </div>
   )

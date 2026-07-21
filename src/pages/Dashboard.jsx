@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { useEffect, useMemo, useState } from 'react'
 import Topbar from '../components/Topbar.jsx'
 import { useChart } from '../components/useChart.js'
+import { useLanguage } from '../language.jsx'
 
 const SALES_STORAGE_KEY = 'kalyankar-sales'
 const PURCHASE_STORAGE_KEY = 'purchaseStockHistory'
@@ -31,6 +32,7 @@ function purchasePaid(row) {
 }
 
 export default function Dashboard() {
+  const { t } = useLanguage()
   const [sales, setSales] = useState([])
   const [purchases, setPurchases] = useState([])
 
@@ -92,10 +94,10 @@ export default function Dashboard() {
   })
 
   const statCards = [
-    { label: "Today's Sales", value: formatCurrency(summary.todaySalesAmount), note: `${summary.todaySalesCount} invoices today`, icon: 'fa-indian-rupee-sign', iconClass: 'icon-blue' },
-    { label: 'Sales Due', value: formatCurrency(summary.salesDue), note: `${summary.dueCustomers} customers pending`, icon: 'fa-user-clock', iconClass: 'icon-red', valueClass: 'text-danger' },
-    { label: 'Purchase Total', value: formatCurrency(summary.purchaseTotal), note: `${summary.purchaseCount} purchase entries`, icon: 'fa-truck-ramp-box', iconClass: 'icon-navy' },
-    { label: 'Purchase Due', value: formatCurrency(summary.purchaseDue), note: `${summary.dueVendors} vendors pending`, icon: 'fa-file-invoice-dollar', iconClass: 'icon-orange', valueClass: 'text-warning' },
+    { label: "Today's Sales", value: formatCurrency(summary.todaySalesAmount), note: `${summary.todaySalesCount} ${t('invoices today')}`, icon: 'fa-indian-rupee-sign', iconClass: 'icon-blue' },
+    { label: 'Sales Due', value: formatCurrency(summary.salesDue), note: `${summary.dueCustomers} ${t('customers pending')}`, icon: 'fa-user-clock', iconClass: 'icon-red', valueClass: 'text-danger' },
+    { label: 'Purchase Total', value: formatCurrency(summary.purchaseTotal), note: `${summary.purchaseCount} ${t('purchase entries')}`, icon: 'fa-truck-ramp-box', iconClass: 'icon-navy' },
+    { label: 'Purchase Due', value: formatCurrency(summary.purchaseDue), note: `${summary.dueVendors} ${t('vendors pending')}`, icon: 'fa-file-invoice-dollar', iconClass: 'icon-orange', valueClass: 'text-warning' },
   ]
 
   return (
@@ -107,7 +109,7 @@ export default function Dashboard() {
           <div className="col-md-6 col-xl-3" key={card.label}>
             <div className="card-box stat-card">
               <div>
-                <small>{card.label}</small>
+                <small>{t(card.label)}</small>
                 <h4 className={card.valueClass}>{card.value}</h4>
                 <span className="stat-change stat-muted">{card.note}</span>
               </div>
@@ -120,45 +122,45 @@ export default function Dashboard() {
       <div className="row g-3 mb-4">
         <div className="col-lg-4">
           <div className="card-box">
-            <div className="section-title">Money Position</div>
+            <div className="section-title">{t('Money Position')}</div>
             <div className="donut-wrap">
               <canvas ref={cashChartRef}></canvas>
             </div>
             <div className="donut-legend">
-              <div className="legend-item"><span className="legend-dot legend-red"></span>Sales Due - {formatCurrency(summary.salesDue)}</div>
-              <div className="legend-item"><span className="legend-dot legend-green"></span>Purchase Paid - {formatCurrency(summary.purchasePaidTotal)}</div>
-              <div className="legend-item"><span className="legend-dot legend-orange"></span>Purchase Due - {formatCurrency(summary.purchaseDue)}</div>
+              <div className="legend-item"><span className="legend-dot legend-red"></span>{t('Sales Due')} - {formatCurrency(summary.salesDue)}</div>
+              <div className="legend-item"><span className="legend-dot legend-green"></span>{t('Purchase Paid')} - {formatCurrency(summary.purchasePaidTotal)}</div>
+              <div className="legend-item"><span className="legend-dot legend-orange"></span>{t('Purchase Due')} - {formatCurrency(summary.purchaseDue)}</div>
             </div>
           </div>
         </div>
 
         <div className="col-lg-4">
           <div className="card-box">
-            <div className="section-title">Pending Customer Payments <Link to="/sales">Open Sales</Link></div>
+            <div className="section-title">{t('Pending Customer Payments')} <Link to="/sales">{t('Open Sales')}</Link></div>
             {dueSales.length ? dueSales.map((sale) => (
               <div className="payment-item" key={sale.id || sale.invoice}>
                 <div>
-                  <strong>{sale.customer || 'Customer'}</strong><br />
+                  <strong>{sale.customer || t('Customer')}</strong><br />
                   <small className="text-muted">{sale.invoice} | {sale.date || sale.invoiceDate}</small>
                 </div>
                 <span className="payment-amount">{formatCurrency(sale.dueAmount)}</span>
               </div>
-            )) : <p className="text-muted mb-0">No customer dues recorded.</p>}
+            )) : <p className="text-muted mb-0">{t('No customer dues recorded.')}</p>}
           </div>
         </div>
 
         <div className="col-lg-4">
           <div className="card-box">
-            <div className="section-title">Pending Purchase Dues <Link to="/purchase-stock">Open Purchase</Link></div>
+            <div className="section-title">{t('Pending Purchase Dues')} <Link to="/purchase-stock">{t('Open Purchase')}</Link></div>
             {duePurchases.length ? duePurchases.map((row) => (
               <div className="payment-item" key={row.id}>
                 <div>
-                  <strong>{row.company || 'Company'}</strong><br />
-                  <small className="text-muted">{row.date} | {row.items?.length || 0} models</small>
+                  <strong>{row.company || t('Company')}</strong><br />
+                  <small className="text-muted">{row.date} | {row.items?.length || 0} {t('models')}</small>
                 </div>
                 <span className="payment-amount">{formatCurrency(row.due)}</span>
               </div>
-            )) : <p className="text-muted mb-0">No purchase dues recorded.</p>}
+            )) : <p className="text-muted mb-0">{t('No purchase dues recorded.')}</p>}
           </div>
         </div>
       </div>
@@ -166,11 +168,11 @@ export default function Dashboard() {
       <div className="row g-3">
         <div className="col-lg-8">
           <div className="card-box">
-            <div className="section-title">Recent Sales <Link to="/sales">View All</Link></div>
+            <div className="section-title">{t('Recent Sales')} <Link to="/sales">{t('View All')}</Link></div>
             <div className="table-responsive">
               <table className="table align-middle">
                 <thead>
-                  <tr><th>Invoice</th><th>Customer</th><th>Battery</th><th>Amount</th><th>Status</th></tr>
+                  <tr><th>{t('Invoice')}</th><th>{t('Customer')}</th><th>{t('Battery')}</th><th>{t('Amount')}</th><th>{t('Status')}</th></tr>
                 </thead>
                 <tbody>
                   {recentSales.map((sale) => (
@@ -179,10 +181,10 @@ export default function Dashboard() {
                       <td>{sale.customer || '-'}</td>
                       <td>{sale.brand || '-'} {sale.model || ''}</td>
                       <td>{formatCurrency(sale.amount)}</td>
-                      <td><span className={Number(sale.dueAmount || 0) > 0 ? 'badge-due' : 'badge-paid'}>{Number(sale.dueAmount || 0) > 0 ? 'Due' : 'Paid'}</span></td>
+                      <td><span className={Number(sale.dueAmount || 0) > 0 ? 'badge-due' : 'badge-paid'}>{Number(sale.dueAmount || 0) > 0 ? t('Due') : t('Paid')}</span></td>
                     </tr>
                   ))}
-                  {!recentSales.length && <tr><td colSpan="5" className="text-center text-muted py-4">No sales saved yet.</td></tr>}
+                  {!recentSales.length && <tr><td colSpan="5" className="text-center text-muted py-4">{t('No sales saved yet.')}</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -191,14 +193,14 @@ export default function Dashboard() {
 
         <div className="col-lg-4">
           <div className="card-box">
-            <div className="section-title">Quick Actions</div>
+            <div className="section-title">{t('Quick Actions')}</div>
             <div className="quick-actions">
-              <Link to="/stock" className="quick-btn"><i className="fa-solid fa-boxes-stacked"></i> Product Stock</Link>
-              <Link to="/purchase-stock" className="quick-btn"><i className="fa-solid fa-truck-ramp-box"></i> Add Purchase</Link>
-              <Link to="/sales" className="quick-btn"><i className="fa-solid fa-cart-plus"></i> New Sale</Link>
-              <Link to="/scrap-stock" className="quick-btn"><i className="fa-solid fa-recycle"></i> Scrap Stock</Link>
-              <Link to="/reports" className="quick-btn"><i className="fa-solid fa-chart-line"></i> Reports</Link>
-              <Link to="/settings" className="quick-btn"><i className="fa-solid fa-gear"></i> Settings</Link>
+              <Link to="/stock" className="quick-btn"><i className="fa-solid fa-boxes-stacked"></i> {t('Product Stock')}</Link>
+              <Link to="/purchase-stock" className="quick-btn"><i className="fa-solid fa-truck-ramp-box"></i> {t('Add Purchase')}</Link>
+              <Link to="/sales" className="quick-btn"><i className="fa-solid fa-cart-plus"></i> {t('New Sale')}</Link>
+              <Link to="/scrap-stock" className="quick-btn"><i className="fa-solid fa-recycle"></i> {t('Scrap Stock')}</Link>
+              <Link to="/reports" className="quick-btn"><i className="fa-solid fa-chart-line"></i> {t('Reports')}</Link>
+              <Link to="/settings" className="quick-btn"><i className="fa-solid fa-gear"></i> {t('Settings')}</Link>
             </div>
           </div>
         </div>

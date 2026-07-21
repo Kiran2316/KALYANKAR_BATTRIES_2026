@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState, useMemo } from 'react'
 import Topbar from '../components/Topbar.jsx'
 import { Html5Qrcode } from 'html5-qrcode'
+import { useLanguage } from '../language.jsx'
+import mainLogo from '../assets/mainlogo.png'
 
-// This page lives in src/pages/product_stock.jsx and is routed at /stock — see src/App.jsx
+// This page lives in src/pages/product_stock.jsx and is routed at /stock â€” see src/App.jsx
 //
 // Structure: Brand -> Models -> Serial Numbers
 //  - A Brand can have many Models (e.g. "XPLORE FXI0-DIN44").
 //  - A Model holds the shared warranty / purchase price / selling price.
 //  - Under a Model you add individual battery Serial Numbers, up to 15 at a
 //    time (scan or type), and each one becomes a separate stock unit.
-// This flow is fully dynamic — it applies automatically to any brand you add,
+// This flow is fully dynamic â€” it applies automatically to any brand you add,
 // including new ones you create later.
 
 const SHOP_INFO = {
@@ -31,7 +33,7 @@ const defaultStockBrands = ['AMARON', 'EXIDE', 'SF SONIC', 'TATA GREEN', 'YOKOHA
 
 // AMARON dealer catalogue (April 2026). Model names are the part numbers
 // printed on the supplied dealer sheet. These are pre-loaded as AMARON
-// models below — price/warranty default to 0 and can be filled in per
+// models below â€” price/warranty default to 0 and can be filled in per
 // model whenever you like (no separate "edit" UI yet, so for now re-enter
 // them by deleting and re-adding the model if a value needs to change).
 const amaronPartNumbers = [
@@ -605,13 +607,14 @@ function renderProductReceiptHTML(products) {
     .map((product, index) => `
       <tr>
         <td>${index + 1}</td>
-        <td><strong>${product.brand || '—'}</strong></td>
-        <td>${product.model || '—'}</td>
+        <td><strong>${product.brand || 'â€”'}</strong></td>
+        <td>${product.model || 'â€”'}</td>
         <td>${product.serialNo || '—'}</td>
+        <td>8507</td>
         <td>${product.warrantyValue || 0} ${product.warrantyUnit || ''}</td>
         <td class="num">&#8377; ${formatCurrency(product.purchasePrice)}</td>
         <td class="num">&#8377; ${formatCurrency(product.sellingPrice)}</td>
-        <td>${product.addedOn || '—'}</td>
+        <td>${product.addedOn || 'â€”'}</td>
       </tr>`)
     .join('')
 
@@ -654,7 +657,7 @@ function renderProductReceiptHTML(products) {
   <div class="doc-header">
     <div>
       <img
-        src="${SHOP_INFO.logo}"
+        src="${mainLogo}"
         alt="${SHOP_INFO.name}"
         class="shop-logo"
         onerror="this.style.display='none'; this.nextElementSibling.style.display='block'"
@@ -679,11 +682,11 @@ function renderProductReceiptHTML(products) {
   <table>
     <thead>
       <tr>
-        <th>SR No.</th><th>Brand</th><th>Model</th><th>Serial No.</th><th>Warranty</th>
+        <th>SR No.</th><th>Brand</th><th>Model</th><th>Serial No.</th><th>HSN</th><th>Warranty</th>
         <th class="num">Purchase Price</th><th class="num">Selling Price</th><th>Added On</th>
       </tr>
     </thead>
-    <tbody>${rows || '<tr><td colspan="8" style="text-align:center;padding:20px">No product records available.</td></tr>'}</tbody>
+    <tbody>${rows || '<tr><td colspan="9" style="text-align:center;padding:20px">No product records available.</td></tr>'}</tbody>
   </table>
 
   <div class="summary">
@@ -868,7 +871,7 @@ function SharedModelFields({ form, setForm }) {
           </div>
         </div>
         <div className="col-md-6 mb-3">
-          <label className="form-label">Purchase Price (₹)</label>
+          <label className="form-label">Purchase Price (â‚¹)</label>
           <input
             type="number"
             className="form-control"
@@ -881,7 +884,7 @@ function SharedModelFields({ form, setForm }) {
       </div>
 
       <div className="mb-3">
-        <label className="form-label">Selling Price (₹) *</label>
+        <label className="form-label">Selling Price (â‚¹) *</label>
         <input
           type="number"
           className="form-control"
@@ -1119,7 +1122,7 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
           </button>
 
           <p className="text-muted small mb-2">
-            Add up to {SERIAL_BATCH_SIZE} serial numbers in this batch — scan them one by one or type them in below.
+            Add up to {SERIAL_BATCH_SIZE} serial numbers in this batch â€” scan them one by one or type them in below.
           </p>
 
           <div className="row">
@@ -1153,7 +1156,7 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
   )
 }
 
-// One model card inside a brand page — click to expand/collapse its serial list.
+// One model card inside a brand page â€” click to expand/collapse its serial list.
 function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSerial, onDeleteModel }) {
   const status = stockStatus(serials.length)
 
@@ -1214,6 +1217,7 @@ function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSe
 }
 
 export default function ProductStock() {
+  const { t } = useLanguage()
   const [products, setProducts] = useState(initialProducts)
   const [models, setModels] = useState(initialModels)
   const [brands, setBrands] = useState(defaultStockBrands)
@@ -1283,7 +1287,7 @@ export default function ProductStock() {
       alert('This brand already exists.')
       return
     }
-    // No extra setup needed — Add Model / Add Serial Number work the same
+    // No extra setup needed â€” Add Model / Add Serial Number work the same
     // way for this brand automatically.
     setBrands((current) => [...current, brand])
     setNewBrand('')
@@ -1372,7 +1376,7 @@ export default function ProductStock() {
   function handlePrintSubmit(e) {
     e.preventDefault()
 
-    // Comma-separated model names — leave blank to include every model.
+    // Comma-separated model names â€” leave blank to include every model.
     const wantedModels = printForm.models
       .split(',')
       .map((m) => m.trim().toUpperCase())
@@ -1482,9 +1486,9 @@ export default function ProductStock() {
         <div className="col-md-6 col-xl-3">
           <div className="card-box stat-card">
             <div>
-              <small>Total Models</small>
+              <small>{t('Total Models')}</small>
               <h4>{summary.totalModels}</h4>
-              <span className="stat-change stat-muted">Across all brands</span>
+              <span className="stat-change stat-muted">{t('Across all brands')}</span>
             </div>
             <div className="stat-icon icon-navy"><i className="fa-solid fa-battery-full"></i></div>
           </div>
@@ -1492,9 +1496,9 @@ export default function ProductStock() {
         <div className="col-md-6 col-xl-3">
           <div className="card-box stat-card">
             <div>
-              <small>Live Stock Units</small>
+              <small>{t('Live Stock Units')}</small>
               <h4 className="text-success">{summary.units}</h4>
-              <span className="stat-change stat-muted">Serial numbers in stock</span>
+              <span className="stat-change stat-muted">{t('Serial numbers in stock')}</span>
             </div>
             <div className="stat-icon icon-green"><i className="fa-solid fa-boxes-stacked"></i></div>
           </div>
@@ -1502,9 +1506,9 @@ export default function ProductStock() {
         <div className="col-md-6 col-xl-3">
           <div className="card-box stat-card">
             <div>
-              <small>Low Stock</small>
+              <small>{t('Low Stock')}</small>
               <h4 className="text-warning">{summary.low}</h4>
-              <span className="stat-change stat-orange">5 or fewer units left</span>
+              <span className="stat-change stat-orange">{t('5 or fewer units left')}</span>
             </div>
             <div className="stat-icon icon-orange"><i className="fa-solid fa-triangle-exclamation"></i></div>
           </div>
@@ -1512,9 +1516,9 @@ export default function ProductStock() {
         <div className="col-md-6 col-xl-3">
           <div className="card-box stat-card">
             <div>
-              <small>Out of Stock</small>
+              <small>{t('Out of Stock')}</small>
               <h4 className="text-danger">{summary.out}</h4>
-              <span className="stat-change down">Needs restocking</span>
+              <span className="stat-change down">{t('Needs restocking')}</span>
             </div>
             <div className="stat-icon icon-red"><i className="fa-solid fa-circle-xmark"></i></div>
           </div>
@@ -1523,7 +1527,7 @@ export default function ProductStock() {
 
       <div className="card-box">
         <div className="section-title d-flex justify-content-between align-items-center flex-wrap gap-2">
-          <span>{selectedBrand ? `${selectedBrand} Batteries` : 'Battery Brands'}</span>
+          <span>{selectedBrand ? `${selectedBrand} Batteries` : t('Battery Brands')}</span>
           <div className="d-flex flex-wrap gap-2">
             <input
               ref={fileInputRef}
@@ -1534,7 +1538,7 @@ export default function ProductStock() {
             />
             {!selectedBrand ? (
               <button type="button" className="btn btn-primary btn-sm" onClick={() => setBrandOpen(true)}>
-                <i className="fa-solid fa-plus me-1"></i> Add Brand
+                <i className="fa-solid fa-plus me-1"></i> {t('Add Brand')}
               </button>
             ) : (
               <>
@@ -1543,19 +1547,19 @@ export default function ProductStock() {
                   className="btn btn-light btn-sm"
                   onClick={() => { setSelectedBrand(null); setSearch(''); setExpandedModelId(null) }}
                 >
-                  <i className="fa-solid fa-arrow-left me-1"></i> All Brands
+                  <i className="fa-solid fa-arrow-left me-1"></i> {t('All Brands')}
                 </button>
                 <button type="button" className="btn btn-outline-primary btn-sm" onClick={() => setModelModalOpen(true)}>
-                  <i className="fa-solid fa-plus me-1"></i> Add Model
+                  <i className="fa-solid fa-plus me-1"></i> {t('Add Model')}
                 </button>
                 <button type="button" className="btn btn-outline-dark btn-sm" onClick={openPrintModal}>
-                  <i className="fa-solid fa-print me-1"></i> Print Receipt
+                  <i className="fa-solid fa-print me-1"></i> {t('Print Receipt')}
                 </button>
                 <button type="button" className="btn btn-outline-secondary btn-sm" onClick={handleImportClick}>
-                  <i className="fa-solid fa-file-excel me-1"></i> Import Excel
+                  <i className="fa-solid fa-file-excel me-1"></i> {t('Import Excel')}
                 </button>
                 <button type="button" className="btn btn-primary btn-sm" onClick={() => openAddSerialModal(null)}>
-                  <i className="fa-solid fa-barcode me-1"></i> Add Serial Number
+                  <i className="fa-solid fa-barcode me-1"></i> {t('Add Serial Number')}
                 </button>
               </>
             )}
@@ -1590,7 +1594,7 @@ export default function ProductStock() {
                 type="text"
                 className="form-control form-control-sm w-auto"
                 style={{ minWidth: 280 }}
-                placeholder="Search by model name..."
+                placeholder={t('Search by model name...')}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -1614,8 +1618,8 @@ export default function ProductStock() {
             {filteredModels.length === 0 && (
               <p className="text-muted text-center py-4">
                 {brandModels.length === 0
-                  ? 'No models yet for this brand. Click "Add Model" to create one.'
-                  : 'No models match your search.'}
+                  ? t('No models yet for this brand. Click "Add Model" to create one.')
+                  : t('No models match your search.')}
               </p>
             )}
           </>
@@ -1625,18 +1629,18 @@ export default function ProductStock() {
       <Modal
         open={brandOpen}
         onClose={() => { setBrandOpen(false); setNewBrand('') }}
-        title="Add Brand"
+        title={t('Add Brand')}
         icon={<i className="fa-solid fa-tags me-2"></i>}
         footer={
           <>
-            <button type="button" className="btn btn-outline-secondary" onClick={() => { setBrandOpen(false); setNewBrand('') }}>Cancel</button>
-            <button type="submit" form="addBrandForm" className="btn btn-primary">Add Brand</button>
+            <button type="button" className="btn btn-outline-secondary" onClick={() => { setBrandOpen(false); setNewBrand('') }}>{t('Cancel')}</button>
+            <button type="submit" form="addBrandForm" className="btn btn-primary">{t('Add Brand')}</button>
           </>
         }
       >
         <form id="addBrandForm" onSubmit={handleAddBrand}>
-          <label className="form-label">Brand Name *</label>
-          <input className="form-control text-uppercase" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} placeholder="Enter brand name" autoFocus required />
+          <label className="form-label">{t('Brand Name *')}</label>
+          <input className="form-control text-uppercase" value={newBrand} onChange={(e) => setNewBrand(e.target.value)} placeholder={t('Enter brand name')} autoFocus required />
         </form>
       </Modal>
 
@@ -1652,22 +1656,22 @@ export default function ProductStock() {
       <Modal
         open={printModalOpen}
         onClose={() => setPrintModalOpen(false)}
-        title={`Print Receipt — ${selectedBrand || ''}`}
+        title={`${t('Print Receipt')} - ${selectedBrand || ''}`}
         icon={<i className="fa-solid fa-print me-2"></i>}
         footer={
           <>
             <button type="button" className="btn btn-outline-secondary" onClick={() => setPrintModalOpen(false)}>
-              Cancel
+              {t('Cancel')}
             </button>
             <button type="submit" form="printReceiptForm" className="btn btn-primary">
-              <i className="fa-solid fa-print me-1"></i> Print
+              <i className="fa-solid fa-print me-1"></i> {t('Print')}
             </button>
           </>
         }
       >
         <form id="printReceiptForm" onSubmit={handlePrintSubmit}>
           <div className="mb-3">
-            <label className="form-label">Model(s)</label>
+            <label className="form-label">{t('Model(s)')}</label>
             <input
               type="text"
               className="form-control"
@@ -1676,13 +1680,13 @@ export default function ProductStock() {
               onChange={(e) => setPrintForm({ ...printForm, models: e.target.value })}
             />
             <small className="text-muted">
-              Separate multiple model names with a comma. Leave blank to include every model.
+              {t('Separate multiple model names with a comma. Leave blank to include every model.')}
             </small>
           </div>
 
           <div className="row">
             <div className="col-md-6 mb-3">
-              <label className="form-label">From Date</label>
+              <label className="form-label">{t('From Date')}</label>
               <input
                 type="date"
                 className="form-control"
@@ -1691,7 +1695,7 @@ export default function ProductStock() {
               />
             </div>
             <div className="col-md-6 mb-3">
-              <label className="form-label">To Date</label>
+              <label className="form-label">{t('To Date')}</label>
               <input
                 type="date"
                 className="form-control"
@@ -1700,7 +1704,7 @@ export default function ProductStock() {
               />
             </div>
           </div>
-          <small className="text-muted">Leave both dates blank to include every date.</small>
+          <small className="text-muted">{t('Leave both dates blank to include every date.')}</small>
         </form>
       </Modal>
 
@@ -1717,3 +1721,4 @@ export default function ProductStock() {
     </>
   )
 }
+

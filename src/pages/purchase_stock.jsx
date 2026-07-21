@@ -182,13 +182,13 @@ export default function PurchaseStock() {
 
           <table>
             <thead>
-              <tr><th>Model</th><th>Units</th><th>Per Price</th><th>Total</th></tr>
+              <tr><th>Model</th><th>HSN</th><th>Units</th><th>Per Price</th><th>Total</th></tr>
             </thead>
             <tbody>
               ${row.items
                 .map(
                   (item) =>
-                    `<tr><td>${item.model}</td><td>${item.units}</td><td>${formatMoney(item.price)}</td><td>${formatMoney(item.total)}</td></tr>`,
+                    `<tr><td>${item.model}</td><td>8507</td><td>${item.units}</td><td>${formatMoney(item.price)}</td><td>${formatMoney(item.total)}</td></tr>`,
                 )
                 .join('')}
             </tbody>

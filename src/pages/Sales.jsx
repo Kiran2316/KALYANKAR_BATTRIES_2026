@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Topbar from '../components/Topbar.jsx'
+import mainLogo from '../assets/mainlogo.png'
 
 const brands = ['Exide', 'Amaron', 'SF Sonic', 'Tata Green', 'Power Zone']
 
@@ -209,6 +210,10 @@ function amountInWords(value) {
   return `${parts.join(' ')} Rupees Only`
 }
 
+function choosePrintLanguage() {
+  return window.confirm('Bill Marathi madhe print karaycha ka?\nOK = Marathi, Cancel = English') ? 'mr' : 'en'
+}
+
 function openPrintWindow(html) {
   const printWindow = window.open('', '_blank', 'width=950,height=1050')
   if (!printWindow) {
@@ -224,7 +229,7 @@ function openPrintWindow(html) {
   }, 350)
 }
 
-function renderInvoiceHTML(fields) {
+function renderInvoiceHTML(fields, printLanguage = 'en') {
   const {
     invoice, date, salesPerson, customer, phone, address, gstNumber,
     vehicleName, vehicleNumber, saleType, exchange,
@@ -270,6 +275,120 @@ function renderInvoiceHTML(fields) {
         </div>`
       : ''
 
+  const labels = printLanguage === 'mr'
+    ? {
+        title: 'कर बिल',
+        gstin: 'GSTIN',
+        date: 'तारीख',
+        customerName: 'ग्राहकाचे नाव',
+        address: 'पत्ता',
+        phone: 'फोन नं.',
+        customerGstin: 'ग्राहक GSTIN',
+        invoiceNo: 'बिल नं.',
+        vehicleName: 'वाहनाचे नाव',
+        vehicleNo: 'वाहन नं.',
+        sr: 'क्र.',
+        desc: 'मालाचे वर्णन',
+        serial: 'सिरीयल नं.',
+        hsn: 'HSN',
+        qty: 'नग',
+        rate: 'दर',
+        discount: 'सवलत',
+        total: 'एकूण',
+        batteryName: 'बॅटरी नाव',
+        model: 'मॉडेल',
+        warranty: 'वॉरंटी',
+        amountWords: 'अक्षरी रु',
+        cgst: 'CGST%',
+        sgst: 'SGST%',
+        grandTotal: 'एकूण',
+        customerCopy: 'ग्राहक प्रत',
+        officeCopy: 'ऑफिस प्रत',
+        signature: 'kalyankar batteries',
+      }
+    : {
+        title: 'Tax Invoice',
+        gstin: 'GSTIN',
+        date: 'Date',
+        customerName: 'Customer Name',
+        address: 'Address',
+        phone: 'Phone no',
+        customerGstin: 'Customer GSTIN',
+        invoiceNo: 'Invoice No',
+        vehicleName: 'Vehicle Name',
+        vehicleNo: 'Vehicle No',
+        sr: 'sr.',
+        desc: 'Product Description',
+        serial: 'sr.no',
+        hsn: 'HSN',
+        qty: 'Qty',
+        rate: 'Rate',
+        discount: 'Dis.',
+        total: 'Total',
+        batteryName: 'Battery name',
+        model: 'model',
+        warranty: 'warranty',
+        amountWords: 'Amount in words',
+        cgst: 'CGST%',
+        sgst: 'SGST%',
+        grandTotal: 'G. Total',
+        customerCopy: 'Customer Copy',
+        officeCopy: 'Office Copy',
+        signature: 'kalyankar batteries',
+      }
+
+  const hsnCode = fields.hsn || '8507'
+  const copyMarkup = (copyLabel) => `
+    <section class="bill-copy">
+      <div class="copy-label">${copyLabel}</div>
+      <div class="bill-header">
+        <img src="${mainLogo}" alt="${SHOP_INFO.name}" class="shop-logo" onerror="this.style.display='none'" />
+        <div class="shop-address">
+          ${printLanguage === 'mr'
+            ? 'शिंदे कॉम्प्लेक्स, मेन रोड, गारगोटी<br/>ता भुदरगड, जि कोल्हापूर, 416209'
+            : 'Shinde Complex, Main Road, Gargoti<br/>Tal. Bhudargad, Dist. Kolhapur, 416209'}
+        </div>
+        <div class="shop-contact"><span>Phone no: ${SHOP_INFO.phone}</span><span>Email: ${SHOP_INFO.email}</span></div>
+      </div>
+      <div class="bill-line"></div>
+      <div class="gst-date-row"><span>${labels.gstin}: ${SHOP_INFO.gstin}</span><span>${labels.date}: ${date}</span></div>
+      <div class="customer-grid">
+        <div>
+          <div class="field-row">${labels.customerName}: ${customer || ''}</div>
+          <div class="field-row">${labels.address}: ${address || ''}</div>
+          <div class="field-row">${labels.address}: </div>
+          <div class="field-row">${labels.phone}: ${phone || ''}</div>
+          <div class="field-row">${labels.customerGstin}: ${gstNumber || ''}</div>
+        </div>
+        <div>
+          <div class="field-row">${labels.invoiceNo}: ${invoice || ''}</div>
+          <div class="field-row">${labels.vehicleName}: ${vehicleName || ''}</div>
+          <div class="field-row">${labels.vehicleNo}: ${vehicleNumber || ''}</div>
+        </div>
+      </div>
+      <table class="items">
+        <thead><tr><th>${labels.sr}</th><th>${labels.desc}</th><th>${labels.serial}</th><th>${labels.hsn}</th><th>${labels.qty}</th><th>${labels.rate}</th><th>${labels.discount}</th><th>${labels.total}</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>${brand || ''} ${batteryType || ''}</td><td>${serialNumber || ''}</td><td>${hsnCode}</td><td>${qty || ''}</td><td class="num">${formatCurrency(unitPrice)}</td><td class="num">${formatCurrency(discount)}</td><td class="num">${formatCurrency(taxableAmount)}</td></tr>
+          <tr><td></td><td>${labels.batteryName}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          <tr><td></td><td>${labels.model}: ${model || ''}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          <tr><td></td><td>${labels.warranty}: ${warrantyPeriod || ''}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
+          ${Array.from({ length: 3 }).map(() => '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
+        </tbody>
+      </table>
+      <div class="below-table">
+        <div class="amount-words">${labels.amountWords}</div>
+        <div class="totals-box">
+          <div class="line"><span>add: ${labels.cgst} :</span><strong>${formatCurrency(cgstAmount)}</strong></div>
+          <div class="line"><span>${labels.sgst} :</span><strong>${formatCurrency(sgstAmount)}</strong></div>
+          <div class="line"><span>${labels.grandTotal} :</span><strong>${formatCurrency(grandTotal)}</strong></div>
+        </div>
+      </div>
+      <div class="signature-space"></div>
+      <div class="signature-line"><div class="line-mark">${labels.signature}</div></div>
+    </section>
+  `
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -278,68 +397,49 @@ function renderInvoiceHTML(fields) {
 <style>
   * { box-sizing: border-box; }
   body {
-    font-family: 'Georgia', 'Times New Roman', serif;
-    color: #1c2436;
+    font-family: Arial, Helvetica, sans-serif;
+    color: #111;
     margin: 0;
     padding: 18px;
-    font-size: 11.5px;
-    line-height: 1.3;
+    font-size: 13px;
+    line-height: 1.15;
   }
-  .sans { font-family: Arial, Helvetica, sans-serif; }
-  .invoice-sheet { max-width: 780px; margin: 0 auto; }
+  .invoice-sheet { display: none; }
+  .print-page { width: 190mm; margin: 0 auto; }
+  .bill-copy { position: relative; min-height: 138mm; padding: 4mm 5mm 3mm; border-bottom: 1px dashed #777; page-break-inside: avoid; break-inside: avoid; }
+  .bill-copy:last-child { border-bottom: 0; }
+  .copy-label { position: absolute; right: 5mm; top: 3mm; font-size: 10px; font-weight: 700; color: #666; }
 
-  .doc-header {
-    display: flex; justify-content: space-between; align-items: flex-start;
-    border-bottom: 3px solid #17213a; padding-bottom: 10px; margin-bottom: 12px;
-  }
-  .shop-brand { display: flex; align-items: flex-start; gap: 14px; }
-  .shop-logo {
-    width: 210px; height: auto; object-fit: contain; flex-shrink: 0;
-  }
-  .shop-meta { font-family: Arial, sans-serif; font-size: 10px; color: #4a5468; margin-top: 5px; line-height: 1.35; max-width: 340px; }
-  .shop-meta strong { color: #17213a; }
+  .bill-header { text-align: center; margin-bottom: 4px; }
+  .shop-logo { width: 290px; max-width: 80%; height: auto; object-fit: contain; display: block; margin: 0 auto 4px; }
+  .shop-address { font-size: 16px; font-weight: 700; line-height: 1.18; margin-top: 4px; }
+  .shop-contact { width: 100%; margin-top: 4px; font-size: 14px; display: grid; grid-template-columns: 1fr 1fr; text-align: left; }
+  .shop-contact span:last-child { text-align: left; }
 
-  .invoice-tag {
-    text-align: right; font-family: Arial, sans-serif;
-  }
-  .invoice-tag .badge-title {
-    display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: 1px;
-    color: #ffffff; background: #17213a; padding: 5px 12px; border-radius: 3px; margin-bottom: 8px;
-  }
-  .invoice-tag .row { font-size: 12px; color: #354160; margin-top: 3px; }
-  .invoice-tag .row strong { color: #17213a; }
-  .status-pill {
-    display: inline-block; margin-top: 6px; padding: 3px 10px; border-radius: 20px;
-    font-size: 11px; font-weight: 700;
-  }
-  .status-paid { background: #e8f8ee; color: #16733a; }
-  .status-due { background: #fff0f0; color: #b93838; }
+  .bill-line { border-top: 1px solid #111; margin: 2px 0; }
+  .gst-date-row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #111; padding: 3px 0 2px; font-size: 14px; }
+  .gst-date-row span:first-child { padding-left: 48px; }
+  .gst-date-row span:last-child { text-align: right; padding-right: 34px; }
 
-  .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; font-family: Arial, sans-serif; }
-  .info-box { border: 1px solid #dde3ee; border-radius: 6px; padding: 8px 10px; }
-  .info-box h4 {
-    margin: 0 0 8px; font-size: 11px; letter-spacing: 0.6px; text-transform: uppercase;
-    color: #6b7688; border-bottom: 1px solid #eef1f7; padding-bottom: 6px;
-  }
-  .info-box p { margin: 2px 0; font-size: 11px; color: #26314a; }
-  .info-box .label { color: #8592a6; }
+  .customer-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 28px; padding: 4px 32px 0; font-size: 14px; }
+  .field-row { min-height: 18px; white-space: nowrap; }
+  .field-row strong { font-weight: 500; }
 
-  table.items { width: 100%; border-collapse: collapse; margin-bottom: 4px; font-family: Arial, sans-serif; }
-  table.items th {
-    background: #17213a; color: #fff; font-size: 10.5px; text-transform: uppercase;
-    letter-spacing: 0.4px; padding: 6px 7px; text-align: left;
-  }
-  table.items td { padding: 6px 7px; font-size: 10.5px; border-bottom: 1px solid #eef1f7; }
-  table.items tr:last-child td { border-bottom: 1px solid #dde3ee; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 2px; font-size: 13px; }
+  table.items th, table.items td { border: 1px solid #111; padding: 2px 4px; height: 20px; font-weight: 400; }
+  table.items th { text-align: center; }
+  table.items .desc { width: 32%; }
+  table.items .sr { width: 6%; text-align: center; }
+  table.items .num { text-align: right; }
+  .product-line td { height: 22px; }
   .num { text-align: right; }
 
-  .totals-wrap { display: flex; justify-content: flex-end; margin-top: 8px; font-family: Arial, sans-serif; }
-  .totals-box { width: 300px; }
-  .totals-box .line { display: flex; justify-content: space-between; padding: 3px 0; font-size: 11px; color: #4a5468; }
-  .totals-box .line strong { color: #1c2436; }
-  .totals-box .grand { border-top: 2px solid #17213a; margin-top: 6px; padding-top: 8px; display: flex; justify-content: space-between; }
-  .totals-box .grand span { font-size: 14px; font-weight: 700; color: #17213a; }
-  .totals-box .grand strong { font-size: 17px; color: #17213a; }
+  .below-table { display: grid; grid-template-columns: 1fr 170px; gap: 12px; align-items: start; margin-top: 0; }
+  .amount-words { padding-left: 48px; padding-top: 4px; font-weight: 700; min-height: 44px; }
+  .totals-box { font-size: 14px; }
+  .totals-box .line { display: grid; grid-template-columns: 1fr 72px; align-items: center; min-height: 20px; }
+  .totals-box .line span { text-align: right; padding-right: 4px; }
+  .totals-box .line strong { border: 1px solid #111; height: 20px; padding: 2px 4px; font-weight: 400; text-align: right; }
 
   .payment-history-block {
     margin-top: 12px; font-family: Arial, sans-serif;
@@ -357,33 +457,26 @@ function renderInvoiceHTML(fields) {
   table.payment-history-table td { padding: 5px 7px; font-size: 10.5px; border-bottom: 1px solid #eef1f7; color: #26314a; }
   table.payment-history-table tr:last-child td { border-bottom: none; }
 
-  .words-box {
-    margin-top: 8px; font-family: Arial, sans-serif; font-size: 10px; color: #4a5468;
-    border-top: 1px dashed #cfd7e4; padding-top: 10px;
-  }
-
-  .warranty-note {
-    margin-top: 10px; font-family: Arial, sans-serif; font-size: 9.5px; color: #4a5468;
-    background: #f6f8fc; border: 1px solid #e3e8f0; border-radius: 6px; padding: 10px 12px;
-  }
-
-  .signatures { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 18px; font-family: Arial, sans-serif; }
+  .notes { margin-top: 10px; font-size: 11px; color: #333; }
+  .signature-space { height: 82px; }
+  .signatures { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 6px; font-family: Arial, sans-serif; }
   .signature-line { width: 220px; text-align: center; }
-  .signature-line .line-mark { border-top: 1px solid #8592a6; padding-top: 6px; font-size: 11px; color: #6b7688; }
+  .signature-line .line-mark { border-top: 1px solid #111; padding-top: 4px; font-size: 13px; color: #111; }
   .shop-stamp {
     width: 210px; height: auto; max-height: 92px; object-fit: contain; margin: 0 auto 4px; display: block;
   }
 
   .doc-footer {
-    text-align: center; margin-top: 12px; font-family: Arial, sans-serif; font-size: 9px; color: #9aa4b6;
-    border-top: 1px solid #eef1f7; padding-top: 12px;
+    text-align: center; margin-top: 8px; font-family: Arial, sans-serif; font-size: 10px; color: #333;
   }
 
   @page { size: A4 portrait; margin: 8mm; }
   @media print {
     html, body { width: 210mm; min-height: 297mm; margin: 0; padding: 0; }
-    body { padding: 0; font-size: 10.5px; line-height: 1.2; }
-    .invoice-sheet { max-width: 100%; width: 100%; page-break-inside: avoid; break-inside: avoid; }
+    body { padding: 0; font-size: 13px; line-height: 1.15; }
+    .print-page { width: 100%; }
+    .bill-copy { min-height: 140mm; padding: 3mm 4mm 2mm; }
+    .invoice-sheet { display: none; }
     .doc-header, .info-grid, table.items, .totals-wrap, .payment-history-block, .words-box, .warranty-note, .signatures, .doc-footer {
       page-break-inside: avoid; break-inside: avoid;
     }
@@ -391,6 +484,10 @@ function renderInvoiceHTML(fields) {
 </style>
 </head>
 <body>
+  <main class="print-page">
+    ${copyMarkup(labels.customerCopy)}
+    ${copyMarkup(labels.officeCopy)}
+  </main>
   <div class="invoice-sheet">
     <div class="doc-header">
       <div class="shop-brand">
@@ -1096,7 +1193,7 @@ export default function Sales() {
       notes: form.notes,
       paymentHistory: previewPaymentHistory,
     }
-    openPrintWindow(renderInvoiceHTML(fields))
+    openPrintWindow(renderInvoiceHTML(fields, choosePrintLanguage()))
   }
 
   function printSavedInvoice(sale) {
@@ -1139,7 +1236,7 @@ export default function Sales() {
       // its own date, amount and method — printed as a dedicated table.
       paymentHistory: sale.paymentHistory || [],
     }
-    openPrintWindow(renderInvoiceHTML(fields))
+    openPrintWindow(renderInvoiceHTML(fields, choosePrintLanguage()))
   }
 
   function renderSalesTable(list, isExchange) {

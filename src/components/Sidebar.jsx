@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
-import logo from '../assets/logo.png'
+import logo from '../assets/mainlogo.png'
+import { useLanguage } from '../language.jsx'
 
 const navItems = [
   { to: '/', icon: 'fa-gauge-high', label: 'Dashboard', end: true },
@@ -13,6 +14,8 @@ const navItems = [
 ]
 
 export default function Sidebar() {
+  const { t } = useLanguage()
+
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -29,15 +32,15 @@ export default function Sidebar() {
             end={item.end}
             className={({ isActive }) => (isActive ? 'active' : undefined)}
           >
-            <i className={`fa-solid ${item.icon}`}></i> {item.label}
+            <i className={`fa-solid ${item.icon}`}></i> {t(item.label)}
           </NavLink>
         ))}
       </nav>
 
       <div className="sidebar-footer">
-        <strong>Kalyankar Batteries</strong>
-        Gargoti - Kolhapur main road, Gargoti 416209<br />
-        Near Swami samarth mangal karyalay<br />
+        <strong>{t('Kalyankar Batteries')}</strong>
+        {t('Gargoti - Kolhapur main road, Gargoti 416209')}<br />
+        {t('Near Swami samarth mangal karyalay')}<br />
         <i className="fa-solid fa-phone"></i> +91 9420007273
       </div>
     </aside>
