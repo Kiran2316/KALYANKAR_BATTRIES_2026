@@ -81,15 +81,105 @@ export default function ScrapStockDetails() {
     const due = Number(record.dueAmount || Math.max(0, total - paid))
     const logoUrl = new URL(mainLogo, window.location.origin).href
     reportWindow.document.write(`<!doctype html><html><head><title>Scrap Battery Record - ${escapeHtml(record.customer || '')}</title><style>
-      *{box-sizing:border-box}body{font-family:Arial,sans-serif;padding:28px;color:#26344b;margin:0}.header{display:flex;align-items:center;gap:22px;border-bottom:3px solid #cf1f2c;padding-bottom:18px;margin-bottom:22px}.logo{width:125px;height:80px;object-fit:contain}.shop{flex:1}.shop h1{margin:0 0 4px;color:#18223a;font-size:25px}.shop p{margin:3px 0;font-size:12px;color:#536078}.title{text-align:center;margin:10px 0 20px;font-size:18px}.section{margin-top:18px}.section h3{font-size:14px;background:#f3f6fa;border-left:4px solid #cf1f2c;padding:9px 11px;margin:0}table{width:100%;border-collapse:collapse}th,td{border:1px solid #dfe4ec;padding:9px 11px;text-align:left;font-size:12px}th{background:#fafbfc;width:24%}.payment th{width:auto}.num{text-align:right}.status{font-weight:bold;color:${due > 0 ? '#b45309' : '#168447'}}.footer{margin-top:28px;padding-top:12px;border-top:1px solid #dfe4ec;color:#7a879c;font-size:11px;text-align:center}@media print{body{padding:10px}.no-print{display:none}}
+      *{box-sizing:border-box}
+      body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#26344b;margin:0;background:#eef1f6}
+      .sheet{max-width:820px;margin:0 auto;background:#fff;border:1.5px solid #1b2440;padding:32px 34px}
+      .header{display:flex;align-items:center;gap:18px;padding-bottom:16px;margin-bottom:22px}
+      .logo{width:70px;height:70px;object-fit:contain}
+      .brand h1{margin:0;font-size:26px;letter-spacing:.5px}
+      .brand h1 .kw{color:#1c3d8f}
+      .brand h1 .bw{color:#cf1f2c}
+      .brand .tagline{margin:2px 0 0;font-size:11px;letter-spacing:1px;color:#5a6780;text-transform:uppercase}
+      .brand .tagline::before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#cf1f2c;margin-right:6px;vertical-align:middle}
+      .contact{margin-left:auto;text-align:right;font-size:11px;color:#5a6780;line-height:1.6}
+      .divider{height:3px;background:linear-gradient(90deg,#1c3d8f,#cf1f2c);margin-bottom:22px}
+      .billrow{display:flex;justify-content:space-between;gap:24px;margin-bottom:22px}
+      .billrow .block h4{margin:0 0 8px;font-size:12px;letter-spacing:.5px;color:#1b2440;text-transform:uppercase;font-weight:800}
+      .billrow .block p{margin:3px 0;font-size:13px}
+      .billrow .block p span{display:inline-block;min-width:110px;color:#7a879c;font-size:11px;text-transform:uppercase;letter-spacing:.3px}
+      .billrow .right{text-align:right}
+      .billrow .right p span{min-width:0;margin-left:8px}
+      table.items{width:100%;border-collapse:collapse;margin-bottom:22px}
+      table.items thead th{background:#1b2440;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:10px 12px;text-align:left}
+      table.items thead th.num{text-align:right}
+      table.items tbody td{padding:11px 12px;font-size:13px;border-bottom:1px solid #e7ebf2}
+      table.items tbody td.num{text-align:right}
+      .totalswrap{display:flex;justify-content:flex-end;margin-bottom:24px}
+      .totals{width:290px;border:1.5px solid #1b2440}
+      .totals .row{display:flex;justify-content:space-between;padding:9px 14px;font-size:13px;border-bottom:1px solid #e7ebf2}
+      .totals .row.grand{background:#1b2440;color:#fff;font-weight:800;font-size:15px;border-bottom:none}
+      .totals .row .status{font-weight:800;color:${due > 0 ? '#b45309' : '#168447'}}
+      .section h3{font-size:12px;letter-spacing:.5px;text-transform:uppercase;color:#1b2440;font-weight:800;border-left:4px solid #cf1f2c;padding:6px 10px;margin:0 0 10px}
+      table.payment{width:100%;border-collapse:collapse;margin-top:6px}
+      table.payment th,table.payment td{border:1px solid #e7ebf2;padding:8px 11px;font-size:12px;text-align:left}
+      table.payment td.num{text-align:right}
+      .footer{margin-top:26px;padding-top:12px;border-top:1px solid #e7ebf2;color:#7a879c;font-size:11px;text-align:center}
+      @media print{body{background:#fff;padding:0}.sheet{border:none;max-width:none}.no-print{display:none}}
     </style></head><body>
-      <header class="header"><img class="logo" src="${logoUrl}" alt="${escapeHtml(SHOP.name)}"><div class="shop"><h1>${escapeHtml(SHOP.name)}</h1><p>${escapeHtml(SHOP.tagline)}</p><p>${escapeHtml(SHOP.address)}</p><p><strong>Contact:</strong> ${escapeHtml(SHOP.phone)} &nbsp; <strong>Email:</strong> ${escapeHtml(SHOP.email)}</p><p><strong>GSTIN:</strong> ${escapeHtml(SHOP.gstin)}</p></div></header>
-      <h2 class="title">Customer Old Battery Scrap Report</h2>
-      <section class="section"><h3>Customer Information</h3><table><tr><th>Customer Name</th><td>${escapeHtml(record.customer || '—')}</td><th>Phone</th><td>${escapeHtml(record.phone || '—')}</td></tr><tr><th>Address</th><td colspan="3">${escapeHtml(record.address || '—')}</td></tr><tr><th>Customer GSTIN</th><td>${escapeHtml(record.gstNumber || '—')}</td><th>Invoice</th><td>${escapeHtml(record.invoice || '—')}</td></tr></table></section>
-      <section class="section"><h3>Battery Information</h3><table><tr><th>Date</th><td>${escapeHtml(record.date || record.invoiceDate || '—')}</td><th>Battery Type</th><td>${escapeHtml(batteryTypeFor(record) || '—')}</td></tr><tr><th>Brand</th><td>${escapeHtml(record.brand || '—')}</td><th>Weight</th><td>${formatNumber(weightFor(record))} Kg</td></tr><tr><th>Model</th><td>${escapeHtml(record.model || '—')}</td><th>Serial Number</th><td>${escapeHtml(record.serialNumber || '—')}</td></tr><tr><th>Vehicle</th><td colspan="3">${escapeHtml(record.vehicleNumber || record.vehicleName || '—')}</td></tr></table></section>
-      <section class="section"><h3>Payment Information</h3><table><tr><th>Total Amount</th><td>&#8377; ${formatNumber(total)}</td><th>Payment Method</th><td>${escapeHtml(record.paymentMethod || '—')}</td></tr><tr><th>Paid Amount</th><td>&#8377; ${formatNumber(paid)}</td><th>Due Amount</th><td>&#8377; ${formatNumber(due)}</td></tr><tr><th>Status</th><td class="status">${escapeHtml(record.status || (due > 0 ? 'Due' : 'Paid'))}</td><th>Notes</th><td>${escapeHtml(record.notes || '—')}</td></tr></table></section>
-      ${paymentHistory.length ? `<section class="section"><h3>Payment History</h3><table class="payment"><thead><tr><th>Date</th><th>Method</th><th class="num">Amount</th></tr></thead><tbody>${paymentHistory.map((entry) => `<tr><td>${escapeHtml(entry.date || '—')}</td><td>${escapeHtml(entry.method || '—')}</td><td class="num">&#8377; ${formatNumber(entry.amount)}</td></tr>`).join('')}</tbody></table></section>` : ''}
-      <div class="footer">This is a system-generated report from ${escapeHtml(SHOP.name)} &bull; Printed on ${new Date().toLocaleDateString('en-IN')}</div><script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script>
+      <div class="sheet">
+        <header class="header">
+          <img class="logo" src="${logoUrl}" alt="${escapeHtml(SHOP.name)}">
+          <div class="brand">
+            <h1><span class="kw">KALYANKAR</span> <span class="bw">BATTERIES</span></h1>
+            <p class="tagline">${escapeHtml(SHOP.tagline)}</p>
+          </div>
+          <div class="contact">
+            <p>${escapeHtml(SHOP.address)}</p>
+            <p><strong>Contact:</strong> ${escapeHtml(SHOP.phone)} &nbsp; <strong>Email:</strong> ${escapeHtml(SHOP.email)}</p>
+            <p><strong>GSTIN:</strong> ${escapeHtml(SHOP.gstin)}</p>
+          </div>
+        </header>
+        <div class="divider"></div>
+
+        <div class="billrow">
+          <div class="block">
+            <h4>Bill To</h4>
+            <p><span>Customer Name</span>${escapeHtml(record.customer || '—')}</p>
+            <p><span>Address</span>${escapeHtml(record.address || '—')}</p>
+            <p><span>Contact No</span>${escapeHtml(record.phone || '—')}</p>
+            <p><span>Customer GSTIN</span>${escapeHtml(record.gstNumber || '—')}</p>
+          </div>
+          <div class="block right">
+            <h4>Record Info</h4>
+            <p><strong>Invoice No:</strong> <span>${escapeHtml(record.invoice || '—')}</span></p>
+            <p><strong>Date:</strong> <span>${escapeHtml(record.date || record.invoiceDate || '—')}</span></p>
+            <p><strong>Vehicle Name:</strong> <span>${escapeHtml(record.vehicleName || '—')}</span></p>
+            <p><strong>Vehicle No:</strong> <span>${escapeHtml(record.vehicleNumber || '—')}</span></p>
+          </div>
+        </div>
+
+        <table class="items">
+          <thead><tr><th>Sr.No</th><th>Battery Type</th><th>Brand</th><th>Model</th><th>Serial No</th><th class="num">Weight (Kg)</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td>${escapeHtml(batteryTypeFor(record) || '—')}</td>
+              <td>${escapeHtml(record.brand || '—')}</td>
+              <td>${escapeHtml(record.model || '—')}</td>
+              <td>${escapeHtml(record.serialNumber || '—')}</td>
+              <td class="num">${formatNumber(weightFor(record))}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="totalswrap">
+          <div class="totals">
+            <div class="row"><span>Total Amount</span><span>&#8377; ${formatNumber(total)}</span></div>
+            <div class="row"><span>Payment Method</span><span>${escapeHtml(record.paymentMethod || '—')}</span></div>
+            <div class="row"><span>Paid Amount</span><span>&#8377; ${formatNumber(paid)}</span></div>
+            <div class="row"><span>Due Amount</span><span>&#8377; ${formatNumber(due)}</span></div>
+            <div class="row"><span>Status</span><span class="status">${escapeHtml(record.status || (due > 0 ? 'Due' : 'Paid'))}</span></div>
+            <div class="row grand"><span>Grand Total</span><span>&#8377; ${formatNumber(total)}</span></div>
+          </div>
+        </div>
+
+        ${record.notes ? `<div class="section"><h3>Notes</h3><p style="font-size:13px;margin:0">${escapeHtml(record.notes)}</p></div>` : ''}
+
+        ${paymentHistory.length ? `<div class="section"><h3>Payment History</h3><table class="payment"><thead><tr><th>Date</th><th>Method</th><th class="num">Amount</th></tr></thead><tbody>${paymentHistory.map((entry) => `<tr><td>${escapeHtml(entry.date || '—')}</td><td>${escapeHtml(entry.method || '—')}</td><td class="num">&#8377; ${formatNumber(entry.amount)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+
+        <div class="footer">This is a system-generated report from ${escapeHtml(SHOP.name)} &bull; Printed on ${new Date().toLocaleDateString('en-IN')}</div>
+      </div>
+      <script>window.onload=()=>setTimeout(()=>window.print(),300)<\/script>
     </body></html>`)
     reportWindow.document.close()
   }
