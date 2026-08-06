@@ -1,14 +1,15 @@
 import { NavLink } from 'react-router-dom'
-import logo from '../assets/mainlogo.png'
+import sidebarBrandLogo from '../assets/sidebar-brand-logo.png'
+import sidebarFooterLogo from '../assets/sidebar-footer-logo.png'
 import { useLanguage } from '../language.jsx'
 
 const navItems = [
-  { to: '/', icon: 'fa-gauge-high', label: 'Dashboard', end: true },
+  { to: '/dashboard', icon: 'fa-gauge-high', label: 'Dashboard', end: true },
   { to: '/stock', icon: 'fa-boxes-stacked', label: 'Product Stock' },
   { to: '/purchase-stock', icon: 'fa-truck-ramp-box', label: 'Purchase Stock' },
   { to: '/sales', icon: 'fa-cart-shopping', label: 'Sales' },
+  { to: '/quotation', icon: 'fa-file-lines', label: 'Quotation' },
   { to: '/scrap-stock', icon: 'fa-recycle', label: 'Scrap Stock' },
-  { to: '/inventory', icon: 'fa-warehouse', label: 'Inventory' },
   { to: '/reports', icon: 'fa-chart-bar', label: 'Reports' },
   { to: '/settings', icon: 'fa-gear', label: 'Settings' },
 ]
@@ -19,8 +20,8 @@ export default function Sidebar() {
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
-        <NavLink to="/">
-          <img src={logo} alt="Kalyankar Batteries" />
+        <NavLink to="/dashboard">
+          <img src={sidebarBrandLogo} alt="Kalyankar Batteries" />
         </NavLink>
       </div>
 
@@ -38,10 +39,7 @@ export default function Sidebar() {
       </nav>
 
       <div className="sidebar-footer">
-        <strong>{t('Kalyankar Batteries')}</strong>
-        {t('Gargoti - Kolhapur main road, Gargoti 416209')}<br />
-        {t('Near Swami samarth mangal karyalay')}<br />
-        <i className="fa-solid fa-phone"></i> +91 9420007273
+        <img src={sidebarFooterLogo} alt="Kalyankar Group of Business" />
       </div>
     </aside>
   )

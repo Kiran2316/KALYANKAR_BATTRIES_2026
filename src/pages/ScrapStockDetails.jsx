@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import Topbar from '../components/Topbar.jsx'
-import mainLogo from '../assets/mainlogo.png'
+import mainLogo from '../assets/sidebar-main-logo.png'
 
 const SALES_STORAGE_KEY = 'kalyankar-sales'
 const SHOP = {
@@ -9,6 +9,7 @@ const SHOP = {
   tagline: 'Certified With Excellent Quality',
   address: 'Gargoti - Kolhapur Road, Gargoti, Near Swami Samarth Mangal Karyalay, 416209',
   phone: '9420007273',
+  whatsapp: '7745047273',
   email: 'kalyankarbatteries7273@gmail.com',
   gstin: '27ARIPK2620F1Z2',
 }
@@ -81,7 +82,7 @@ export default function ScrapStockDetails() {
     const due = Number(record.dueAmount || Math.max(0, total - paid))
     const logoUrl = new URL(mainLogo, window.location.origin).href
     reportWindow.document.write(`<!doctype html><html><head><title>Scrap Battery Record - ${escapeHtml(record.customer || '')}</title><style>
-      *{box-sizing:border-box}
+      *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
       body{font-family:Arial,Helvetica,sans-serif;padding:24px;color:#26344b;margin:0;background:#eef1f6}
       .sheet{max-width:820px;margin:0 auto;background:#fff;border:1.5px solid #1b2440;padding:32px 34px}
       .header{display:flex;align-items:center;gap:18px;padding-bottom:16px;margin-bottom:22px}
@@ -91,7 +92,8 @@ export default function ScrapStockDetails() {
       .brand h1 .bw{color:#cf1f2c}
       .brand .tagline{margin:2px 0 0;font-size:11px;letter-spacing:1px;color:#5a6780;text-transform:uppercase}
       .brand .tagline::before{content:'';display:inline-block;width:5px;height:5px;border-radius:50%;background:#cf1f2c;margin-right:6px;vertical-align:middle}
-      .contact{margin-left:auto;text-align:right;font-size:11px;color:#5a6780;line-height:1.6}
+      .company-info{flex:1;background-color:#bfe8f7!important;box-shadow:inset 0 0 0 1000px #bfe8f7;border:1px solid #8fcfe5;border-radius:12px;padding:12px 16px}
+      .contact{margin:5px 0 0;text-align:left;font-size:11px;color:#5a6780;line-height:1.6}
       .divider{height:3px;background:linear-gradient(90deg,#1c3d8f,#cf1f2c);margin-bottom:22px}
       .billrow{display:flex;justify-content:space-between;gap:24px;margin-bottom:22px}
       .billrow .block h4{margin:0 0 8px;font-size:12px;letter-spacing:.5px;color:#1b2440;text-transform:uppercase;font-weight:800}
@@ -119,15 +121,15 @@ export default function ScrapStockDetails() {
       <div class="sheet">
         <header class="header">
           <img class="logo" src="${logoUrl}" alt="${escapeHtml(SHOP.name)}">
-          <div class="brand">
+          <div class="company-info"><div class="brand">
             <h1><span class="kw">KALYANKAR</span> <span class="bw">BATTERIES</span></h1>
             <p class="tagline">${escapeHtml(SHOP.tagline)}</p>
           </div>
           <div class="contact">
             <p>${escapeHtml(SHOP.address)}</p>
-            <p><strong>Contact:</strong> ${escapeHtml(SHOP.phone)} &nbsp; <strong>Email:</strong> ${escapeHtml(SHOP.email)}</p>
+            <p><strong>Contact:</strong> ${escapeHtml(SHOP.phone)} &nbsp; <strong>WhatsApp No:</strong> ${escapeHtml(SHOP.whatsapp)} &nbsp; <strong>Email:</strong> ${escapeHtml(SHOP.email)}</p>
             <p><strong>GSTIN:</strong> ${escapeHtml(SHOP.gstin)}</p>
-          </div>
+          </div></div>
         </header>
         <div class="divider"></div>
 
@@ -149,7 +151,7 @@ export default function ScrapStockDetails() {
         </div>
 
         <table class="items">
-          <thead><tr><th>Sr.No</th><th>Battery Type</th><th>Brand</th><th>Model</th><th>Serial No</th><th class="num">Weight (Kg)</th></tr></thead>
+          <thead><tr><th>Sr.No</th><th>Battery Type</th><th>Brand</th><th>Model</th><th>Serial No</th><th class="num">Wright (KG)</th></tr></thead>
           <tbody>
             <tr>
               <td>1</td>
@@ -200,7 +202,7 @@ export default function ScrapStockDetails() {
         <button className="btn btn-outline-secondary mb-3" onClick={() => navigate('/scrap-stock')}><i className="fa-solid fa-arrow-left me-2"></i>Back to Scrap Stock</button>
         <div className="row g-3 mb-3">
           <div className="col-md-6"><div className="card-box stat-card"><div><small>Showing Batteries</small><h4>{filteredRecords.length} Qty</h4><span className="stat-change stat-muted">{title}</span></div></div></div>
-          <div className="col-md-6"><div className="card-box stat-card"><div><small>Showing Weight</small><h4 className="text-success">{formatNumber(totalWeight)} Kg</h4><span className="stat-change stat-muted">Based on current search</span></div></div></div>
+          <div className="col-md-6"><div className="card-box stat-card"><div><small>Showing Wright (KG)</small><h4 className="text-success">{formatNumber(totalWeight)} KG</h4><span className="stat-change stat-muted">Based on current search</span></div></div></div>
         </div>
         <section className="details-panel">
           <div className="details-head">
@@ -213,7 +215,7 @@ export default function ScrapStockDetails() {
           </div>
           <div className="table-responsive">
             <table className="table details-table">
-              <thead><tr><th>Date</th><th>Invoice</th><th>Customer Name / Address / Phone</th><th>Battery Type</th><th>Brand</th><th>Weight (Kg)</th><th>Action</th></tr></thead>
+              <thead><tr><th>Date</th><th>Invoice</th><th>Customer Name / Address / Phone</th><th>Battery Type</th><th>Brand</th><th>Wright (KG)</th><th>Action</th></tr></thead>
               <tbody>{filteredRecords.map((record, index) => <tr key={record.id || `${record.invoice}-${index}`}>
                 <td>{record.date || record.invoiceDate || '—'}</td><td>{record.invoice || '—'}</td><td><strong>{record.customer || '—'}</strong><div className="text-muted small text-wrap" style={{ minWidth: 210 }}>{record.address || '—'}</div><div className="small"><i className="fa-solid fa-phone me-1"></i>{record.phone || '—'}</div></td><td><span className="badge text-bg-light border">{batteryTypeFor(record) || '—'}</span></td><td>{record.brand || '—'}</td><td><strong>{formatNumber(weightFor(record))}</strong></td>
                 <td><div className="d-flex gap-2"><button className="btn btn-sm btn-outline-primary" data-bs-toggle="modal" data-bs-target="#scrapRecordModal" onClick={() => setSelectedRecord(record)}><i className="fa-solid fa-eye me-1"></i>See</button><button className="btn btn-sm btn-outline-secondary" onClick={() => printRecord(record)}><i className="fa-solid fa-print me-1"></i>Print</button><button className="btn btn-sm btn-outline-danger" onClick={() => deleteRecord(record)}><i className="fa-solid fa-trash me-1"></i>Delete</button></div></td>

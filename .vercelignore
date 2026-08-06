@@ -1,0 +1,14 @@
+.git
+.agents
+.codex
+.openai
+.vercel
+node_modules
+dist
+.codex-site.tar.gz
+IMG_3784.jpg
+IMG_3785.jpg
+IMG_3785_fixed.jpg
+IMG_3786.jpg
+*.log
+*.bak

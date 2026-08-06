@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react'
 import Topbar from '../components/Topbar.jsx'
 import { Html5Qrcode } from 'html5-qrcode'
 import { useLanguage } from '../language.jsx'
-import mainLogo from '../assets/mainlogo.png'
+import mainLogo from '../assets/sidebar-main-logo.png'
 
 // This page lives in src/pages/product_stock.jsx and is routed at /stock â€” see src/App.jsx
 //
@@ -19,6 +19,7 @@ const SHOP_INFO = {
   tagline: 'Certified With Excellent Quality',
   address: 'Gargoti - Kolhapur Road, Gargoti, Near Swami Samarth Mangal Karyalay',
   phone: '9420007273',
+  whatsapp: '7745047273',
   email: 'kalyankarbatteries7273@gmail.com',
   gstin: '27ARIPK2620F1Z2',
   // Color logo shown at the top of the invoice
@@ -29,7 +30,10 @@ const SHOP_INFO = {
 
 const warrantyUnits = ['Days', 'Months', 'Years']
 
-const defaultStockBrands = ['AMARON', 'EXIDE', 'SF SONIC', 'TATA GREEN', 'YOKOHAMA', 'BOSCH']
+const defaultStockBrands = ['AMARON', 'EXIDE', 'SF SONIC', 'TATA GREEN', 'YOKOHAMA', 'BOSCH', 'POWER ZONE']
+const PRODUCT_STOCK_STORAGE_KEY = 'kalyankar-product-stock'
+const PRODUCT_MODELS_STORAGE_KEY = 'kalyankar-product-models'
+const PRODUCT_BRANDS_STORAGE_KEY = 'kalyankar-product-brands'
 
 // AMARON dealer catalogue (April 2026). Model names are the part numbers
 // printed on the supplied dealer sheet. These are pre-loaded as AMARON
@@ -143,6 +147,20 @@ const amaronPartNumbers = [
   'ABR-PR-HMATZ5L',
   'AAM-BA0A48ATZ6L',
   'AAM-BA-A48ATZ14R',
+]
+
+const powerZonePartNumbers = [
+  '36PZTX25', '48PZTZ4L', '48PZTZ5L', '48PZTX50', '48PZTX7R', '48PZTZ9R',
+  'PZ48TZ6L', '48PZTZAL', 'PZ46TZEL', '48PZTX90', '48PZTZ0R', '48PZTZ14R',
+  '48PZTX000', 'PZ320R', 'PZ300RMF', 'PZ3WMF', 'PZ4000R', 'PZ6000R',
+  'PZ600RMF', 'PZ6000L', 'PZ600LMF', 'PZ320L', '40B20L', '38B20L',
+  'PZ4000L', '40B20R', '38B20R', '40B20LB', '46B24LS', '45D20LB',
+  'DIN45', 'DIN50', 'DIN50R', 'DIN55R', 'DIN55', 'DIN65', 'DIN66',
+  'DIN74', 'DIN80', 'DIN100', '85D23R', '90D23LB', '95D26R', 'PZ7000R',
+  'PZ7000L', '105D31R', '105D31L', 'PZ8000R', 'PZ8000L', 'PZ9000R',
+  'PZ9000L', 'NT9000R', 'NT9000L', 'PZ10000R', 'PZ10000L', 'NT10000R',
+  'NT10000L', 'NT13000R', 'NT1500MF', 'NTPZ15000', 'NTPZ18000', 'NT1800MF',
+  'PZ200H52R',
 ]
 
 const exidePartNumbers = [
@@ -523,8 +541,31 @@ const initialModels = [
   ...makeSeedModels(tataGreenPartNumbers, 'TATA GREEN'),
   ...makeSeedModels(boschPartNumbers, 'BOSCH'),
   ...makeSeedModels(sfSonicPartNumbers, 'SF SONIC'),
+  ...makeSeedModels(powerZonePartNumbers, 'POWER ZONE'),
 ] // { id, brand, name, warrantyValue, warrantyUnit, purchasePrice, sellingPrice, addedOn }
 const initialProducts = [] // { id, modelId, brand, model, serialNo, warrantyValue, warrantyUnit, purchasePrice, sellingPrice, addedOn }
+
+function readStoredList(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null')
+    return Array.isArray(value) ? value : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function mergeSeedBrands(storedBrands) {
+  const knownBrands = new Set(storedBrands.map((brand) => String(brand).toUpperCase()))
+  return [...storedBrands, ...defaultStockBrands.filter((brand) => !knownBrands.has(brand))]
+}
+
+function mergeSeedModels(storedModels) {
+  const knownModels = new Set(storedModels.map((model) => `${String(model.brand).toUpperCase()}::${String(model.name).toUpperCase()}`))
+  return [
+    ...storedModels,
+    ...initialModels.filter((model) => !knownModels.has(`${model.brand}::${model.name.toUpperCase()}`)),
+  ]
+}
 
 const emptyModelForm = {
   name: '',
@@ -534,8 +575,12 @@ const emptyModelForm = {
   sellingPrice: '',
 }
 
-const SERIAL_BATCH_SIZE = 15
-const MODEL_BATCH_SIZE = 15
+const SERIAL_BATCH_SIZE = 1000
+const MODEL_BATCH_SIZE = 1000
+
+function parseBulkEntries(value) {
+  return String(value || '').split(/[\n,;\t]+/).map((entry) => entry.trim().toUpperCase()).filter(Boolean)
+}
 
 function stockStatus(count) {
   if (count <= 0) return { label: 'Out of Stock', cls: 'badge-out-stock' }
@@ -624,14 +669,14 @@ function renderProductReceiptHTML(products) {
 <meta charset="utf-8" />
 <title>Product Stock Receipt</title>
 <style>
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   body { font-family: Georgia, 'Times New Roman', serif; color:#1c2436; margin:0; padding:18px; font-size:11px; }
   .sheet { max-width: 900px; margin:0 auto; }
   .doc-header { display:flex; justify-content:space-between; align-items:flex-start; border-bottom:3px solid #17213a; padding-bottom:10px; margin-bottom:14px; }
   .shop-logo { width:210px; height:auto; object-fit:contain; display:block; }
   .shop-name { font-family:Arial,sans-serif; font-size:22px; font-weight:800; color:#17213a; margin:0 0 2px; }
   .shop-tagline { font-family:Arial,sans-serif; font-size:10px; font-weight:700; color:#5f6b7d; margin-bottom:5px; text-transform:uppercase; letter-spacing:.6px; }
-  .shop-meta { font-family:Arial,sans-serif; font-size:10px; color:#4a5468; margin-top:5px; line-height:1.4; max-width:390px; }
+  .shop-meta { font-family:Arial,sans-serif; font-size:10px; color:#4a5468; margin-top:5px; line-height:1.4; max-width:390px; background-color:#bfe8f7 !important; box-shadow:inset 0 0 0 1000px #bfe8f7; border:1px solid #8fcfe5; border-radius:10px; padding:9px 11px; }
   .shop-meta strong { color:#17213a; }
   .receipt-tag { text-align:right; font-family:Arial,sans-serif; }
   .badge-title { display:inline-block; font-size:11px; font-weight:700; letter-spacing:1px; color:white; background:#17213a; padding:5px 12px; border-radius:3px; margin-bottom:8px; }
@@ -667,8 +712,9 @@ function renderProductReceiptHTML(products) {
         <div class="shop-tagline">${SHOP_INFO.tagline}</div>
       </div>
       <div class="shop-meta">
+        <div class="shop-name">${SHOP_INFO.name}</div>
         <strong>${SHOP_INFO.address}</strong><br/>
-        Phone: ${SHOP_INFO.phone} &nbsp;|&nbsp; ${SHOP_INFO.email}<br/>
+        Phone: ${SHOP_INFO.phone} &nbsp;|&nbsp; WhatsApp No: ${SHOP_INFO.whatsapp} &nbsp;|&nbsp; ${SHOP_INFO.email}<br/>
         GSTIN: ${SHOP_INFO.gstin}
       </div>
     </div>
@@ -698,6 +744,79 @@ function renderProductReceiptHTML(products) {
 </div>
 </body>
 </html>`
+}
+
+function renderSalesStyleProductReceiptHTML(products, printLanguage = 'en') {
+  const labels = printLanguage === 'mr'
+    ? {
+        title: 'उत्पादन स्टॉक पावती', date: 'तारीख:', totalEntries: 'एकूण नोंदी:',
+        serial: 'अनु. क्र.', brand: 'ब्रँड', model: 'मॉडेल', serialNumber: 'सिरियल नं.',
+        warranty: 'वॉरंटी', purchase: 'खरेदी', selling: 'विक्री', addedOn: 'जोडल्याची तारीख',
+        totalSerials: 'एकूण सिरियल नंबर', empty: 'उत्पादनाच्या नोंदी उपलब्ध नाहीत.',
+        footer: `ही ${SHOP_INFO.name} कडून संगणकाद्वारे तयार केलेली स्टॉक पावती आहे.`,
+      }
+    : {
+        title: 'PRODUCT STOCK RECEIPT', date: 'Date:', totalEntries: 'Total Entries:',
+        serial: 'SR', brand: 'Brand', model: 'Model', serialNumber: 'Serial No.',
+        warranty: 'Warranty', purchase: 'Purchase', selling: 'Selling', addedOn: 'Added On',
+        totalSerials: 'Total Serial Numbers', empty: 'No product records available.',
+        footer: `This is a computer-generated stock receipt from ${SHOP_INFO.name}.`,
+      }
+  const rows = products.map((product, index) => `
+    <tr>
+      <td>${index + 1}</td>
+      <td><strong>${product.brand || '-'}</strong></td>
+      <td>${product.model || '-'}</td>
+      <td>${product.serialNo || '-'}</td>
+      <td>8507</td>
+      <td>${product.warrantyValue || 0} ${product.warrantyUnit || ''}</td>
+      <td class="num">&#8377; ${formatCurrency(product.purchasePrice)}</td>
+      <td class="num">&#8377; ${formatCurrency(product.sellingPrice)}</td>
+      <td>${product.addedOn || '-'}</td>
+    </tr>`).join('')
+
+  const copyMarkup = () => `
+    <section class="bill-copy">
+      <div class="header-row">
+        <div class="logo-box"><img src="${mainLogo}" alt="${SHOP_INFO.name}" onerror="this.style.display='none'" /></div>
+        <div class="copy-title">
+          <div class="badge-title">${labels.title}</div>
+          <div><strong>${labels.date}</strong> ${new Date().toLocaleDateString('en-GB')}</div>
+          <div><strong>${labels.totalEntries}</strong> ${products.length}</div>
+        </div>
+      </div>
+      <div class="shop-meta"><strong>${SHOP_INFO.name}</strong><br/>${SHOP_INFO.address}<br/>Phone: ${SHOP_INFO.phone} | WhatsApp No: ${SHOP_INFO.whatsapp} | ${SHOP_INFO.email}<br/>GSTIN: ${SHOP_INFO.gstin}</div>
+      <table class="items">
+        <thead><tr><th>${labels.serial}</th><th>${labels.brand}</th><th>${labels.model}</th><th>${labels.serialNumber}</th><th>HSN</th><th>${labels.warranty}</th><th class="num">${labels.purchase}</th><th class="num">${labels.selling}</th><th>${labels.addedOn}</th></tr></thead>
+        <tbody>${rows || `<tr><td colspan="9" style="text-align:center;padding:20px">${labels.empty}</td></tr>`}</tbody>
+      </table>
+      <div class="spacer"></div>
+      <div class="summary-box"><div class="summary-line"><span>${labels.totalSerials}</span><strong>${products.length}</strong></div></div>
+      <div class="footer">${labels.footer}</div>
+    </section>`
+
+  return `<!DOCTYPE html><html><head><meta charset="utf-8" /><title>Product Stock Receipt</title><style>
+    *{box-sizing:border-box;-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}
+    body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:0;font-size:10px;line-height:1.2;overflow:hidden}
+    .print-page{width:100%;display:flex;gap:8mm;position:relative}
+    .print-page::before{content:'';position:absolute;top:-3mm;bottom:-3mm;left:50%;border-left:1px dashed #111}
+    .bill-copy{width:calc(50% - 4mm);height:194mm;border:1px solid #111;padding:5mm;display:flex;flex-direction:column;overflow:hidden}
+    .header-row{display:flex;justify-content:space-between;align-items:flex-start;gap:4mm;margin-bottom:3mm}
+    .logo-box{width:72mm;height:28mm;display:flex;align-items:center;justify-content:flex-start;overflow:hidden}
+    .logo-box img{max-width:100%;max-height:100%;object-fit:contain}
+    .copy-title{text-align:right;font-size:10px;line-height:1.5}
+    .badge-title{display:inline-block;border:1px solid #111;padding:2mm 3mm;font-size:9px;font-weight:800;letter-spacing:.04em;margin-bottom:2mm}
+    .shop-meta{font-size:9.5px;color:#333;line-height:1.35;margin-bottom:3mm;background-color:#bfe8f7!important;box-shadow:inset 0 0 0 1000px #bfe8f7;border:1px solid #8fcfe5;border-radius:3mm;padding:2.5mm}
+    table.items{width:100%;border-collapse:collapse;font-size:8.3px}
+    table.items th,table.items td{border:0;border-bottom:1px solid #d9dee8;padding:1.7mm 1mm;text-align:left;vertical-align:top}
+    table.items th{color:#777;font-size:7.4px;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+    .num{text-align:right}.spacer{flex:1}
+    .summary-box{width:52mm;margin-left:auto;border-top:2px solid #111;padding-top:2mm}
+    .summary-line{display:flex;justify-content:space-between;gap:6mm;font-size:10px}
+    .footer{margin-top:4mm;padding-top:2mm;border-top:1px solid #d9dee8;font-size:8.5px;color:#555;text-align:center}
+    @page{size:A4 landscape;margin:5mm}
+    @media print{*{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important}html,body{width:287mm;height:200mm;margin:0;padding:0;overflow:hidden}.print-page{width:100%;display:flex;gap:8mm}.print-page::before{position:fixed;top:3mm;bottom:3mm;left:50%}.bill-copy{break-inside:avoid;page-break-inside:avoid}}
+  </style></head><body><main class="print-page">${copyMarkup()}${copyMarkup()}</main></body></html>`
 }
 
 // Small CSV parser for "Import Excel" (export your sheet as .csv).
@@ -754,6 +873,7 @@ function Modal({ open, onClose, title, icon, children, footer, size = '' }) {
 
 // Shared scanner for serial/model barcodes, with hardware scanner and keyboard fallback.
 function ScannerModal({ open, onClose, onResult, title = 'Scan Barcode', label = 'value', placeholder = 'Scan or type value' }) {
+  const { t } = useLanguage()
   const [manualValue, setManualValue] = useState('')
   const [cameraError, setCameraError] = useState('')
   const scannerRef = useRef(null)
@@ -805,12 +925,12 @@ function ScannerModal({ open, onClose, onResult, title = 'Scan Barcode', label =
       icon={<i className="fa-solid fa-barcode me-2"></i>}
       footer={
         <button type="button" className="btn btn-outline-secondary" onClick={onClose}>
-          Close
+          {t('Close')}
         </button>
       }
     >
       <p className="text-muted small mb-3">
-        Point the camera at the barcode, or click the box below and use your USB barcode scanner.
+        {t('Point the camera at the barcode, or click the box below and use your USB barcode scanner.')}
       </p>
 
       <div
@@ -818,12 +938,12 @@ function ScannerModal({ open, onClose, onResult, title = 'Scan Barcode', label =
         className="rounded mb-2 overflow-hidden"
         style={{ minHeight: 220, background: '#0b0f14' }}
       ></div>
-      {cameraError && <div className="alert alert-warning py-2 small">{cameraError}</div>}
+      {cameraError && <div className="alert alert-warning py-2 small">{t(cameraError)}</div>}
 
       <form onSubmit={handleManualSubmit}>
         <label className="form-label small">
           <i className="fa-solid fa-keyboard me-1"></i>
-          Scan with barcode scanner or enter {label} manually
+          {t('Scan with barcode scanner or enter')} {t(label)} {t('manually')}
         </label>
         <div className="input-group">
           <input
@@ -835,7 +955,7 @@ function ScannerModal({ open, onClose, onResult, title = 'Scan Barcode', label =
             autoFocus
           />
           <button type="submit" className="btn btn-primary">
-            Use Value
+            {t('Use Value')}
           </button>
         </div>
       </form>
@@ -844,11 +964,12 @@ function ScannerModal({ open, onClose, onResult, title = 'Scan Barcode', label =
 }
 
 function SharedModelFields({ form, setForm }) {
+  const { t } = useLanguage()
   return (
     <>
       <div className="row">
         <div className="col-md-6 mb-3">
-          <label className="form-label">Warranty</label>
+          <label className="form-label">{t('Warranty')}</label>
           <div className="input-group">
             <input
               type="number"
@@ -865,7 +986,7 @@ function SharedModelFields({ form, setForm }) {
               onChange={(e) => setForm({ ...form, warrantyUnit: e.target.value })}
             >
               {warrantyUnits.map((u) => (
-                <option key={u} value={u}>{u}</option>
+                <option key={u} value={u}>{t(u)}</option>
               ))}
             </select>
           </div>
@@ -900,36 +1021,29 @@ function SharedModelFields({ form, setForm }) {
 }
 
 function AddModelModal({ onClose, brand, existingModelNames, onSave }) {
-  const [form, setForm] = useState(emptyModelForm)
-  const [slots, setSlots] = useState(Array(MODEL_BATCH_SIZE).fill(''))
+  const { t } = useLanguage()
+  const [bulkText, setBulkText] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
-  const filledCount = slots.filter((s) => s.trim()).length
-
-  function updateSlot(index, value) {
-    setSlots((prev) => prev.map((v, i) => (i === index ? value.toUpperCase() : v)))
-  }
+  const filledCount = parseBulkEntries(bulkText).length
 
   function handleScanResult(value) {
-    setSlots((prev) => {
-      const emptyIndex = prev.findIndex((v) => !v.trim())
-      if (emptyIndex === -1) {
+    setBulkText((previous) => {
+      if (parseBulkEntries(previous).length >= MODEL_BATCH_SIZE) {
         alert(`You can only add ${MODEL_BATCH_SIZE} model names per batch. Save this batch first, then scan more.`)
-        return prev
+        return previous
       }
-      const next = [...prev]
-      next[emptyIndex] = value.trim().toUpperCase()
-      return next
+      return `${previous}${previous.trim() ? '\n' : ''}${value.trim().toUpperCase()}`
     })
   }
 
   function handleSave(e) {
     e.preventDefault()
-    if (!form.sellingPrice) {
-      alert('Selling price is required.')
+
+    const filled = parseBulkEntries(bulkText)
+    if (filled.length > MODEL_BATCH_SIZE) {
+      alert(`You can only add ${MODEL_BATCH_SIZE} model names at a time.`)
       return
     }
-
-    const filled = slots.map((s) => s.trim().toUpperCase()).filter(Boolean)
     if (filled.length === 0) {
       alert('Scan or type at least one model name.')
       return
@@ -952,7 +1066,7 @@ function AddModelModal({ onClose, brand, existingModelNames, onSave }) {
       return
     }
 
-    onSave(filled, form)
+    onSave(filled, emptyModelForm)
   }
 
   return (
@@ -960,47 +1074,33 @@ function AddModelModal({ onClose, brand, existingModelNames, onSave }) {
       <Modal
         open
         onClose={onClose}
-        title={`Add Models - ${brand || ''}`}
+        title={`${t('Add Models')} - ${brand || ''}`}
         icon={<i className="fa-solid fa-battery-full me-2"></i>}
         size="modal-lg"
         footer={
           <>
-            <button type="button" className="btn btn-outline-secondary" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn btn-outline-secondary" onClick={onClose}>{t('Cancel')}</button>
             <button type="submit" form="addModelBatchForm" className="btn btn-primary">
-              <i className="fa-solid fa-check me-1"></i> Save {filledCount > 0 ? `${filledCount} ` : ''}Model{filledCount === 1 ? '' : 's'}
+              <i className="fa-solid fa-check me-1"></i> {t('Save')} {filledCount > 0 ? `${filledCount} ` : ''}{t(filledCount === 1 ? 'Model' : 'Models')}
             </button>
           </>
         }
       >
         <form id="addModelBatchForm" onSubmit={handleSave}>
           <button type="button" className="btn btn-outline-warning btn-sm mb-3" onClick={() => setScannerOpen(true)}>
-            <i className="fa-solid fa-barcode me-1"></i> Scan Model Name
+            <i className="fa-solid fa-barcode me-1"></i> {t('Scan Model Name')}
           </button>
 
           <p className="text-muted small mb-2">
-            Add up to {MODEL_BATCH_SIZE} model names in this batch. Camera scan, USB barcode scanner, and typing all work here.
+            Add up to {MODEL_BATCH_SIZE} model names. Enter one per line, or paste comma/tab-separated values. Scanners append automatically.
           </p>
-
-          <div className="row">
-            {slots.map((value, index) => (
-              <div className="col-md-4 mb-2" key={index}>
-                <div className="input-group input-group-sm">
-                  <span className="input-group-text">{index + 1}</span>
-                  <input
-                    type="text"
-                    className="form-control font-monospace"
-                    placeholder={`Model #${index + 1}`}
-                    value={value}
-                    onChange={(e) => updateSlot(index, e.target.value)}
-                    autoFocus={index === 0}
-                  />
-                </div>
-              </div>
-            ))}
+          <textarea className="form-control font-monospace" rows="10" autoFocus
+            placeholder={'MODEL-001\nMODEL-002\nMODEL-003'} value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)} />
+          <div className={`small mt-1 ${filledCount > MODEL_BATCH_SIZE ? 'text-danger' : 'text-muted'}`}>
+            {filledCount} / {MODEL_BATCH_SIZE} models
           </div>
 
-          <hr />
-          <SharedModelFields form={form} setForm={setForm} />
         </form>
       </Modal>
 
@@ -1008,8 +1108,8 @@ function AddModelModal({ onClose, brand, existingModelNames, onSave }) {
         open={scannerOpen}
         onClose={() => setScannerOpen(false)}
         onResult={handleScanResult}
-        title="Scan Model Name"
-        label="model name"
+        title={t('Scan Model Name')}
+        label="Model Name"
         placeholder="e.g. AAM-FL-00080D23L"
       />
     </>
@@ -1019,27 +1119,21 @@ function AddModelModal({ onClose, brand, existingModelNames, onSave }) {
 // Add up to SERIAL_BATCH_SIZE (15) serial numbers at once, by scanning or typing.
 // Only mounted while open, so its internal state always starts fresh.
 function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials, onSave }) {
+  const { t } = useLanguage()
   const [modelId, setModelId] = useState(presetModelId || '')
-  const [slots, setSlots] = useState(Array(SERIAL_BATCH_SIZE).fill(''))
+  const [bulkText, setBulkText] = useState('')
   const [scannerOpen, setScannerOpen] = useState(false)
 
   const selectedModel = models.find((m) => m.id === modelId)
-  const filledCount = slots.filter((s) => s.trim()).length
-
-  function updateSlot(index, value) {
-    setSlots((prev) => prev.map((v, i) => (i === index ? value.toUpperCase() : v)))
-  }
+  const filledCount = parseBulkEntries(bulkText).length
 
   function handleScanResult(value) {
-    setSlots((prev) => {
-      const emptyIndex = prev.findIndex((v) => !v.trim())
-      if (emptyIndex === -1) {
+    setBulkText((previous) => {
+      if (parseBulkEntries(previous).length >= SERIAL_BATCH_SIZE) {
         alert(`You can only add ${SERIAL_BATCH_SIZE} serial numbers per batch. Save this batch first, then scan more.`)
-        return prev
+        return previous
       }
-      const next = [...prev]
-      next[emptyIndex] = value.trim().toUpperCase()
-      return next
+      return `${previous}${previous.trim() ? '\n' : ''}${value.trim().toUpperCase()}`
     })
     setScannerOpen(false)
   }
@@ -1052,7 +1146,11 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
       return
     }
 
-    const filled = slots.map((s) => s.trim().toUpperCase()).filter(Boolean)
+    const filled = parseBulkEntries(bulkText)
+    if (filled.length > SERIAL_BATCH_SIZE) {
+      alert(`You can only add ${SERIAL_BATCH_SIZE} serial numbers at a time.`)
+      return
+    }
     if (filled.length === 0) {
       alert('Scan or type at least one serial number.')
       return
@@ -1083,16 +1181,16 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
       <Modal
         open
         onClose={onClose}
-        title="Add Serial Numbers"
+        title={t('Add Serial Numbers')}
         icon={<i className="fa-solid fa-barcode me-2"></i>}
         size="modal-lg"
         footer={
           <>
             <button type="button" className="btn btn-outline-secondary" onClick={onClose}>
-              Cancel
+              {t('Cancel')}
             </button>
             <button type="submit" form="addSerialForm" className="btn btn-primary">
-              <i className="fa-solid fa-check me-1"></i> Save {filledCount > 0 ? `${filledCount} ` : ''}Serial Number{filledCount === 1 ? '' : 's'}
+              <i className="fa-solid fa-check me-1"></i> {t('Save')} {filledCount > 0 ? `${filledCount} ` : ''}{t(filledCount === 1 ? 'Serial Number' : 'Serial Numbers')}
             </button>
           </>
         }
@@ -1100,13 +1198,13 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
         <form id="addSerialForm" onSubmit={handleSave}>
           {presetModelId ? (
             <p className="mb-3">
-              <span className="text-muted">Model:</span> <strong>{selectedModel?.name}</strong>
+              <span className="text-muted">{t('Model')}:</span> <strong>{selectedModel?.name}</strong>
             </p>
           ) : (
             <div className="mb-3">
-              <label className="form-label">Model *</label>
+              <label className="form-label">{t('Model')} *</label>
               <select className="form-control" required value={modelId} onChange={(e) => setModelId(e.target.value)}>
-                <option value="">Select model</option>
+                <option value="">{t('Select model')}</option>
                 {models.map((m) => (
                   <option key={m.id} value={m.id}>{m.name}</option>
                 ))}
@@ -1118,28 +1216,18 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
           )}
 
           <button type="button" className="btn btn-outline-warning btn-sm mb-3" onClick={() => setScannerOpen(true)}>
-            <i className="fa-solid fa-barcode me-1"></i> Scan Serial Number
+            <i className="fa-solid fa-barcode me-1"></i> {t('Scan Serial Number')}
           </button>
 
           <p className="text-muted small mb-2">
             Add up to {SERIAL_BATCH_SIZE} serial numbers in this batch â€” scan them one by one or type them in below.
           </p>
 
-          <div className="row">
-            {slots.map((value, index) => (
-              <div className="col-md-4 mb-2" key={index}>
-                <div className="input-group input-group-sm">
-                  <span className="input-group-text">{index + 1}</span>
-                  <input
-                    type="text"
-                    className="form-control font-monospace"
-                    placeholder={`Serial #${index + 1}`}
-                    value={value}
-                    onChange={(e) => updateSlot(index, e.target.value)}
-                  />
-                </div>
-              </div>
-            ))}
+          <textarea className="form-control font-monospace" rows="12" autoFocus
+            placeholder={'SERIAL-0001\nSERIAL-0002\nSERIAL-0003'} value={bulkText}
+            onChange={(e) => setBulkText(e.target.value)} />
+          <div className={`small mt-1 ${filledCount > SERIAL_BATCH_SIZE ? 'text-danger' : 'text-muted'}`}>
+            {filledCount} / {SERIAL_BATCH_SIZE} serial numbers
           </div>
         </form>
       </Modal>
@@ -1148,8 +1236,8 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
         open={scannerOpen}
         onClose={() => setScannerOpen(false)}
         onResult={handleScanResult}
-        title="Scan Serial Number"
-        label="serial number"
+        title={t('Scan Serial Number')}
+        label="Serial Number"
         placeholder="e.g. EX44DIN2409981"
       />
     </>
@@ -1158,6 +1246,7 @@ function AddSerialModal({ onClose, brand, models, presetModelId, existingSerials
 
 // One model card inside a brand page â€” click to expand/collapse its serial list.
 function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSerial, onDeleteModel }) {
+  const { t } = useLanguage()
   const status = stockStatus(serials.length)
 
   return (
@@ -1169,9 +1258,6 @@ function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSe
       >
         <div>
           <strong>{model.name}</strong>
-          <div className="small text-muted">
-            &#8377; {formatCurrency(model.sellingPrice)} &middot; {model.warrantyValue || 0} {model.warrantyUnit}
-          </div>
         </div>
         <span className={status.cls}>{serials.length} &middot; {status.label}</span>
       </div>
@@ -1182,12 +1268,12 @@ function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSe
           className="btn btn-sm btn-outline-primary"
           onClick={(e) => { e.stopPropagation(); onAddSerial() }}
         >
-          <i className="fa-solid fa-plus me-1"></i> Add Serial
+          <i className="fa-solid fa-plus me-1"></i> {t('Add Serial')}
         </button>
         <button
           type="button"
           className="btn btn-sm btn-outline-danger"
-          title="Delete model"
+          title={t('Delete model')}
           onClick={(e) => { e.stopPropagation(); onDeleteModel() }}
         >
           <i className="fa-solid fa-trash"></i>
@@ -1196,14 +1282,14 @@ function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSe
 
       {expanded && (
         <div className="mt-2">
-          {serials.length === 0 && <em className="text-muted small">No serial numbers yet.</em>}
+          {serials.length === 0 && <em className="text-muted small">{t('No serial numbers yet.')}</em>}
           {serials.map((s) => (
             <div key={s.id} className="d-flex justify-content-between align-items-center border-bottom py-1">
               <span className="font-monospace small">{s.serialNo}</span>
               <button
                 type="button"
                 className="btn btn-sm btn-link text-danger p-0"
-                title="Remove serial number"
+                title={t('Remove serial number')}
                 onClick={() => onDeleteSerial(s.id)}
               >
                 <i className="fa-solid fa-xmark"></i>
@@ -1217,10 +1303,10 @@ function ModelCard({ model, serials, expanded, onToggle, onAddSerial, onDeleteSe
 }
 
 export default function ProductStock() {
-  const { t } = useLanguage()
-  const [products, setProducts] = useState(initialProducts)
-  const [models, setModels] = useState(initialModels)
-  const [brands, setBrands] = useState(defaultStockBrands)
+  const { t, language, setLanguage } = useLanguage()
+  const [products, setProducts] = useState(() => readStoredList(PRODUCT_STOCK_STORAGE_KEY, initialProducts))
+  const [models, setModels] = useState(() => mergeSeedModels(readStoredList(PRODUCT_MODELS_STORAGE_KEY, initialModels)))
+  const [brands, setBrands] = useState(() => mergeSeedBrands(readStoredList(PRODUCT_BRANDS_STORAGE_KEY, defaultStockBrands)))
 
   const [selectedBrand, setSelectedBrand] = useState(null)
   const [brandOpen, setBrandOpen] = useState(false)
@@ -1238,6 +1324,18 @@ export default function ProductStock() {
   const [printForm, setPrintForm] = useState({ models: '', fromDate: '', toDate: '' })
 
   const fileInputRef = useRef(null)
+
+  useEffect(() => {
+    localStorage.setItem(PRODUCT_STOCK_STORAGE_KEY, JSON.stringify(products))
+  }, [products])
+
+  useEffect(() => {
+    localStorage.setItem(PRODUCT_MODELS_STORAGE_KEY, JSON.stringify(models))
+  }, [models])
+
+  useEffect(() => {
+    localStorage.setItem(PRODUCT_BRANDS_STORAGE_KEY, JSON.stringify(brands))
+  }, [brands])
 
   const brandModels = useMemo(
     () => models.filter((m) => m.brand.toUpperCase() === selectedBrand),
@@ -1404,7 +1502,7 @@ export default function ProductStock() {
       return
     }
 
-    openPrintWindow(renderProductReceiptHTML(brandProducts))
+    openPrintWindow(renderSalesStyleProductReceiptHTML(brandProducts, language))
     setPrintModalOpen(false)
   }
 
@@ -1527,7 +1625,7 @@ export default function ProductStock() {
 
       <div className="card-box">
         <div className="section-title d-flex justify-content-between align-items-center flex-wrap gap-2">
-          <span>{selectedBrand ? `${selectedBrand} Batteries` : t('Battery Brands')}</span>
+          <span>{selectedBrand ? `${selectedBrand} ${t('Batteries')}` : t('Battery Brands')}</span>
           <div className="d-flex flex-wrap gap-2">
             <input
               ref={fileInputRef}
@@ -1580,8 +1678,8 @@ export default function ProductStock() {
                 >
                   <span>{brand}</span>
                   <small>
-                    {modelCount} {modelCount === 1 ? 'model' : 'models'}
-                    {unitCount > 0 ? ` | ${unitCount} ${unitCount === 1 ? 'battery' : 'batteries'} in stock` : ''}
+                    {modelCount} {t(modelCount === 1 ? 'model' : 'models')}
+                    {unitCount > 0 ? ` | ${unitCount} ${t(unitCount === 1 ? 'battery' : 'batteries')} ${t('in stock')}` : ''}
                   </small>
                 </button>
               )
@@ -1663,6 +1761,15 @@ export default function ProductStock() {
             <button type="button" className="btn btn-outline-secondary" onClick={() => setPrintModalOpen(false)}>
               {t('Cancel')}
             </button>
+            <select
+              className="form-select w-auto"
+              aria-label="Print language"
+              value={language}
+              onChange={(event) => setLanguage(event.target.value)}
+            >
+              <option value="en">English</option>
+              <option value="mr">Marathi</option>
+            </select>
             <button type="submit" form="printReceiptForm" className="btn btn-primary">
               <i className="fa-solid fa-print me-1"></i> {t('Print')}
             </button>

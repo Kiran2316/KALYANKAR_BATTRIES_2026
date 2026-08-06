@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Topbar from '../components/Topbar.jsx'
-import mainLogo from '../assets/mainlogo.png'
+import paymentQr from '../assets/payment-qr.jpg'
+import { getPaymentSettings } from '../appSettings.js'
+import salesPrintLogo from '../assets/sales-print-logo.png'
+import { getGstSettings } from '../gstSettings.js'
+import html2canvas from 'html2canvas'
+import { jsPDF } from 'jspdf'
+import { INVOICE_SHORT_LINK_BASE, supabase } from '../supabaseClient.js'
+import { formatIndianPhone, isValidIndianPhone } from '../phoneFormat.js'
 
-const brands = ['Exide', 'Amaron', 'SF Sonic', 'Tata Green', 'Power Zone']
+const defaultSalesBrands = ['Exide', 'Amaron', 'SF Sonic', 'Tata Green', 'Power Zone']
 
 const batteryTypes = [
   'Car Battery',
@@ -35,8 +42,9 @@ function parseBatteryBarcode(rawValue) {
     // The barcode is plain text, so continue with the text formats below.
   }
 
-  const labelledModel = raw.match(/(?:model|capacity)\s*[:=]\s*([^|,;]+?)(?=\s+(?:serial|s\/n|sn)\s*[:=]|[|,;]|$)/i)
-  const labelledSerial = raw.match(/(?:serial(?:\s*(?:number|no))?|s\/n|sn)\s*[:=]\s*([^|,;\s]+)/i)
+  const serialLabel = String.raw`(?:serial(?:\s*(?:number|no\.?))?|s\/n|sn)`
+  const labelledModel = raw.match(new RegExp(`(?:model(?:\\s*(?:number|no\\.?))?|capacity)\\s*[:=]\\s*([^|,;]+?)(?=\\s+${serialLabel}\\s*[:=]|[|,;]|$)`, 'i'))
+  const labelledSerial = raw.match(new RegExp(`${serialLabel}\\s*[:=]\\s*([^|,;\\s]+)`, 'i'))
   if (labelledModel && labelledSerial) {
     return {
       model: labelledModel[1].trim(),
@@ -63,6 +71,46 @@ function parseBatteryBarcode(rawValue) {
   return { model: raw, serialNumber: raw.toUpperCase() }
 }
 
+function normalizeScanValue(value) {
+  return String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+}
+
+function resolveBatteryScan(rawValue, stockProducts) {
+  const raw = String(rawValue || '').trim()
+  const normalizedRaw = normalizeScanValue(raw)
+
+  // Most manufacturer barcodes contain only the serial number. The stock
+  // record is the trusted source for its corresponding model number.
+  const stockMatch = stockProducts.find((product) => {
+    const serial = normalizeScanValue(product.serialNo)
+    return serial && (normalizedRaw === serial || normalizedRaw.includes(serial))
+  })
+  if (stockMatch) {
+    return {
+      model: String(stockMatch.model || '').trim().toUpperCase(),
+      serialNumber: String(stockMatch.serialNo || '').trim().toUpperCase(),
+    }
+  }
+
+  const parsed = parseBatteryBarcode(raw)
+  const parsedSerial = normalizeScanValue(parsed.serialNumber)
+  const parsedStockMatch = stockProducts.find((product) => normalizeScanValue(product.serialNo) === parsedSerial)
+  if (parsedStockMatch) {
+    return {
+      model: String(parsedStockMatch.model || '').trim().toUpperCase(),
+      serialNumber: String(parsedStockMatch.serialNo || '').trim().toUpperCase(),
+    }
+  }
+
+  const isWebsiteOrToken = /^(?:https?:\/\/|www\.)/i.test(raw) || (!/[|,;\s]/.test(raw) && parsed.model === parsed.serialNumber)
+  if (isWebsiteOrToken) return { model: '', serialNumber: '' }
+
+  return {
+    model: String(parsed.model || '').trim().toUpperCase(),
+    serialNumber: String(parsed.serialNumber || '').trim().toUpperCase(),
+  }
+}
+
 function formatWarrantyPeriod(warrantyDigits) {
   const digits = String(warrantyDigits || '').replace(/\D/g, '').slice(0, 4)
 
@@ -83,24 +131,67 @@ function calculateTotalWarranty(warrantyDigits) {
 }
 
 // Shop details used on the printed invoice.
-// logo / stamp are embedded below as base64 data URIs (your actual
-// Kalyankar Batteries logo and rubber stamp), so they always render inside
-// the print pop-up window with no extra setup or hosting required.
 const SHOP_INFO = {
   name: 'Kalyankar Batteries',
   tagline: 'Certified With Excellent Quality',
   address: 'Gargoti - Kolhapur Road, Gargoti, Near Swami Samarth Mangal Karyalay',
   phone: '9420007273',
+  whatsapp: '7745047273',
   email: 'kalyankarbatteries7273@gmail.com',
   gstin: '27ARIPK2620F1Z2',
-  // Color logo shown at the top of the invoice
-  logo: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQQAAABuCAMAAAD2zp2wAAAA/1BMVEUAAAAFo9QVFBTZLyEan68gHx4fHh3y9o4A//8SnMZgX18cmLj//n7q7ZHKMSf2CQdbnart6p8dncUUl7sGeXmvMyXINSoAf/8ojK+mKyF2CwYMpuqoV1UAAP9bGhYHbrP//Pu6NiyrTiCVT1WgpKapqFkOT2Ts7qFqW2ZVdI7rYF/2Wwi3MycbdJKnU05frM5Ud56yRDZkXSxFgpymOEz//wBSXGEtWGMQOUmrUUz4qVzrn6MrMVlr3eM4RjpoKGEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACZAiHvAAAAQHRSTlMA9vnzF12g/AGiEl0CmaMIEDljmAUWYgL8/ggOFQH/BQJXFPwGA/9C+/0MB5v/Xw4MWA/8FwFHUviRAwUXBxofuuH5QQAAEQhJREFUeNrtXQl32jq3PYDwZ4te7GAbCDbBENKbkDmd5///r94ZJFkGktDmrvWaELUFY0uytLXP6KEAr+W1vJbX8lpey2v5z0r3FQLotgO95xBMu+12O9hzEII2l73GoG3L3iqGqtuuS1fvtShcft5fkbA0GLfGn/eVDIYGn8ctLG/b+0gGA0H7bUuKRSHo7h0E7cuWLVYkEIZsH3SBg+Ati0IrapLhxZpLq/F0jYCFoNX7MDBkqGGopUK/XA4gBFYSFGRQRBswEA7Vi+KB1l0fAA+CKIECFLwxZGhdvvWrIRDY9nkLQJdK0Jh9QxCIBjDDiiMAFbU22WCgCALs51kHBRsI1Bahl0AYSixZAAzc/su397bWzx+Ez28vHQlaKdLge90A0RhEzmBevv38/EHQm/P3AUBloNaboExAL6prIBCbSOhnZS4s+alcNqZPZZBYleEKciHTTRgICYKCivOrnxsIR4eXrS1lQCRQ1ZrCdC2TQbSl0dnR0fMLLmjEh51363OJBkVyXSiVke/s0YClfXEL5Wi2HYezzuGzcya7AkJDDNJejzmAZiFTGpnQwAzKyS3iAHc3M8ZBDSIfifEzByGNBoOBUgfmEIEgUVQTBCod+ZWpkUiGwpa91APBpGRDBoqrzkbOvsxG9bayinc0C13VzBybuRgtHKnQVTSd2Op+b/VZYKSkjMLdQDgkECLXOkP3T2efxIcESqLYQuKgJ3jgAoyHiKNz9iPdAMGV9Yhzev+QQv97+ugyju5p7leZ7gxCTylUAirLNu3mPaXrrRO17a2BEEKS9hJmFXqavTcylmnSS3t2wCrtfZDtHvojodlHW9TY7JJ6yZTaT2dUMYNZ2qtC6dn2NoVrOmb1NrGTikp+Qxx6YDtI9N0ECy42fU10luns58+fzAU+Irs/NZdXwToII+IGdVuQbJkTZEAqZEC+J04ukt3cNiXmZlR1fAA/pglJVxLSScIYO0pp0Quq2IOZTr2GHNyhU5ukfBaBMq31VG8Z7swEA0KGSxBFvQFZSPyMojR16KatKBJ8cfRp0mD5Jgg8xxSUYCBDlVooe0zjEz5vIVNvDWhW59gm+hoW4p7TLuznRrZHGMEMqEtGCLEopDcmjJIWEQPCPdeqHrLfZkIlUVIqY0c5MYzNfinfhqj4ESYwCJHhAfZPIykgcpE50pvnVhjStNTUrqySeSMVRDLsdhMEhwHT5U3dc8g9R0lRKFNj9LsgkITWICS+elO+Kwk7gaA9Hpj5MDYKQSgtCMhlXsUi4T2yrJERFgtC+gEtQ68GIfMxUHSausWJ9CNWrjm3h0AY1BWzmayhtJ/V88yUF1BMFrsxwWDAbZjlKe3JSJMtzYISvgPejkQRsOYYYIfRaupA4CHSPgEhEgwSbo9HqEUhhDEgoLouimxXEM6aIECRDSwTVOiYlGUfmHG981VZlkvcE+8AQiIYFGIPVrxWMi5PHKxADAQvmba69n8xPMoTh4FBdyamgQBVgqppIUwYrK3kgyBEHgjmXIpxtUol40m13n3pSLmYhzDxQYhqt9kDgdfwh/g6zNnWTYhwjWm9VjUIYba0WkzZBTdMMpCwlg0HNROk9sxbggMed4wjXbLvLxq8FVXho4rxaAOEERSWyMq6HwqYB6eHnU6/32cY+rmHgiylHzuE4BzqyONsFM6UEWUPBGs3WglOAb7R8hVFj1dhJiCIcNZMMPZPhh3GEbs60vM1LP1AKIFdQDitrZaZkFoHoYAETzM+vTgvyWlRJeNQ1ihMDROONkCI7FhD0yM7lwS6D0I4qqTiSE7fop2GygwCg5T4IHDUwtpGVPZXAPE8Zj4IardQmkFoLWEbCILiVMY1hpIOxzFNfUFc0LHDoKJOTjdBYEFlsWIDh0OPzOjD0gPBGHqSkozhMNWi2IhDqIlGHgjRjegbbDFihEwLmsmSe75+XCG4zFLnuOUTfxOETPTLGOOF8pymPYHbEt4jCgs4ty7w0gMBahBuxEpF33CwlR9wkiYW5zEMQ+ft4PkySHxXB1eSfhdgDTRqBlKZ0UTIEcEsbNAfpz1dGsXY2wEFH4Si9qsYhNSBoOAA+Ts+03Bzx8djGF4gB4adzhByCwKP/FhA4PSaNZEFpEYgVCP3EIdaRmxCUuE7xoJGOzh9YsTB+EYWBKTQ6Dz1vSbXohImhMUsqT2JR9Jrh8drjkKTCTNOtI+Pb0EgQB6sOjGsYvBAyEiXYqVOnWgVEKpRNjLGjH8v4Qf8WBY8eDZkJ9fX10nywcyExCbhmaI/9qOiXddGlSiVGItg3WbjvSkDN7a4rsTKChMKwT1ahI9fc93wlhpMEHVwdtgXhYAlh34H2ZAjFRwIxk04PFwHgdoLbVei3wVHXmKf9r2pEYeC4TRjkdkKCCMZifMTkOVWIJRzC+DA9TzgC0bRo86SBWHNRvogsKeKWr9zBcZFjFEb9FEXnDdBGKynE0Y2SMS/Kbs67CSMwtDECBA3ohzet5rKCdEtwaIqjh9nhtNyEownEyvqomaYMOhohlPbs3WWQ5ac9GEQGo7CaAsIX4F95TMyh8YS2MnnMX2XUM+4mWJklS1hboZExv5SE+nCdLqkbZQzWygTwMdHONexDXnYqFI4i6aAGs4ITXISe+S7s8pWrmdpEeKpBuAqjCRFlu3oKLCZ3WRCT7Ty6YVzks9RGhgE/LbITOHruoVkfrhAK+agU9W5otUWlX1jFmzmLVxyw5/OEpsuZy6nn6sVGq3Zegulrca+Ubs4Cs5GZk0QCmNwiIRjcJSKGYQYy33GoVvnusItSbN628sPckQlGIVevXAtN2eOrfU89VpMQVIKdk8G8FiaMajNQ60+PCYICr2mdkEvCUFALN7njSh7DJ3mxYkwbCb/woezgdNwo5nZDhu/kVTh9N6epZe6QvgYBlVQX3kYbANBLI6JxYxvFyIIFcAc7aSVkS168ZESU47OSVjOLpgpckwOm03boI5VJu4ATPK8fHrSfT168EBgEhTgMj6GCZ1F3pcQarEZQ+5y1SG2UMBaSL61mteAgCkbTXJ4uI9dL8SJUnDRVsNP6HGiClywAjGDABJJoobjJt+26cWHSpnnizw3g8/ntJS5KaDdFrgNeO8alFfkpbgDkA/n89GTUDBKQRznTRCuRxLyzeLIJutIGaBKhHJIKCxoMY3rdtzZ8TbHXxx4mGh8EuekZFC8TOnbjU6Z211gtvpz4HDFVp5DLtXzp6CwzWdsMGH2lX2egjPa16jFzxkE4iUHknTyzbTSw2XBcceQ8hJlnDOpSpwN5yn6/aHd6BPOfSpDaTDsMwfxnH1zICc4eH/5BBR8pZBPtwVQ4Uqy/DfkBa9GIbnLtAIIQ86jvzMB49nO0rCAmNaetMt7FHFa/KHRNnOpMZTjc/niHR2pMATad+EOSNP+k0DY5in44oAWPLwRE6Ekhy/gkz7KZWiL35UGBqETrqijkqLRfk4b8TkKyTw/z/M4x31Vfk4ghKHW7KUSCIjXEJ32IicQVroU2ZznoXqafdgiD14Uec2Jf+WjoA0TSFWXDIcxkCZ62kUrwtDIdAyxpj7ECS2p44V45sj53FVj+elfkBC8J3XQvzAqoqQ2tBE/STM2wodwa1JFItLCJvFHcxrruXMe88yXhmBXJojkl0QHpn8Sk5LxQWCqsOgvLBxzqOhreCEH5uQcz/tip56Agm7X9sHELRvptRnvSOxFxTmt4IKtdp9jKOX5zLArCOR29XGurOOYFJsgDBs6ocTqZTlHe/De6YR4iCrhBru7sEmuPylVsHHxYQMEkwT/IJcIB04X58wE7UtD8BsgEJH6WtaUreTDICiifp+1YK0YS9KttOviv5AHjiSr7YlWcz04MumfYzzjwqZXStDL3/WUGIQFLiqZN5nOkK1kEwRWh3MqrB1Czugt8km/HyMIcqBC+PLV0DR8sjyMnU8ol8obIHAMby+EjY9jCWVpKZdyTXB8LGrx+24gLKwXtEQuxXl8rkn73XU6tzUIk/PagWJxiBe84oBuw4W9BATvxVm60PHT7YNQIf1Acy7kQo8yCW0PhZ7xi+QqWjxZ4QL8MpdddlaLjPztkEo5ggUrN9QxQ00SbsBdDHOKE8o5uklYMEaZs8u8uEWMrtBVH0pZsNss3//BLZ2HLvE+9S7IeplHJWkdyM8kvlYVEaHU25yEN8s3D5fKVvyK/6ic8Lf5QRtgvkw92UGJn5OT8pt34Jskg1YPn3G5hKrahQrvxEri2kv6kpIq0dKF6tOMUEhuO4d87XTFDt0QMrlZyU+xPsvS9akQguYsfmouxNNVru9y31YWpzjbzu21XJ3WV4dztI+JRwSjFquDfw8O/q3LwX9Ztvb375Za5txu42Em/GzLna3vJDObmoTSj9Tk+evyI0rhli8mRq0xfFmt3bXWXgp1//3f31j+qR58QKVBhRv49OnjR8qZ6Y8fP3769Kkrdzh//w7Zr1+/JvojsgJrcJ2PutgggoZ//koQ/vcwCDqoqRB9CoIAAvogddEscCoN+IsqfP4UcXLxqCYCnungn7+xHMCHHWJJoUIvu9HNcme+S311dfXllj7KxcXVF/zO+Z4x4yM89+fjDBXI+mHkeG+5+oIfX77dXlUrdFq+wHHphU61aai2GCliCJy8OTlBc3hCP05oB/8W+8h2sHrDVHqDB5yJxE1uxP8qtpXmh5hUXt8TV6viHrjGxhB2SSscsduY3nctm9N7q9sr/PyW35ar8uoq9ZzFR7wRI2BGC9Gfegc9SIH/dAAVah9Nf2Q/yWBDkDW2q+2wvoM7+EaPX9U1JtS3/nMqtA9PW2s3cd0TdVWS7GeteHq4i7OIM+4GrDbR4OJWF9r2ubHlHR2hfShRNJ826httG2Fswj+0PEoSkC6a0I3XOH+ePFXi50y0PHHTxs+Abr7W1R9lmI747tZWcu/Fu3gSTzTIjRo6YxdhfHy0SzIlsEvbJW1LT1G0adrymxEMlqySNR+RxZUVpnmbil3+ETCirL9xru2M+u0SfrITuAdEYvkUjyn6ph6/wXxayC19O2pFAaFNw6UPmQwOFn/TZJAPvIHCIMc049KmeTNBBJI21+FeuHIXhF+4HWRUVWrooPqzBxSbAjF7tL65m/jscLfIKaD16vJzNIEBQTMIXSsoXV5aEBC0Jl1g6NMGA0KXmUDL3nUgQFv8GP4dCDo68DXObxTfb3zsvgZ3U6LF4PGEEo1Oxi3CH7jpQGAG3KZFx9nTat4JCPa4VA0cgwI7aekZz49dtmm3MKGNhPqjtwF1PQtRX3N7GIPx7i6CzJQ+2BSQlu/KbyP6rPbpmKajbCC65rlbQiKgB9nFrmCDE7Nh8KU6AR9gu6O7XfjDlzwEBgVzU/lDt4aPzL02BoP//xdR6U3Mn+IyGbWQLqf339+RwTISYfhrXzDS/f6nLWVK4jhG1b2GMgsXfzsGT71IbZVjdHCPXshAblZ9Z5TiS3unhlWO78yt0bMHZMF6SS/vnWwNExFtsxEFJGkDgxf43qXARwFthNrAQNJuL5cHFM0YFE7HJsvWuPEpVOamtvHpy+WBxwWDwgAaz8SYe6ktBu2fLxMDk2xrtw0K0dKhMIPlwGDw4t9AZlE4emcfOeBnmLKRvbXxnaHBi35XZ2JROHP3c6pMubfKnFkMvsOLLhaFU3MPegLu/UJOHbz8N9fa9zCe2teO2VcsOXWwF2/i23wHny8K+/K61mCNDD4N9ubFlD+662S4dO8Ygz0qjfew1e9b2683F+v67Zzj/aRBw0q09/sF1s13bu3tC92D9ut7zGuZ2PP/4+H1vzYQGF4heC2v5bW83PJ/tIZjzvxLLoYAAAAASUVORK5CYII=',
+  upiId: 'sidkalyankar23-4@okicici',
+  bankName: 'State Bank of India',
+  companyName: 'Exide care of Kalyankar',
+  accountHolderName: 'Kalyankar Siddhesh Ranjit',
+  accountNumber: '00000043183306202',
+  ifsc: 'SBIN0015563',
+  termsAndConditions: [
+    'Goods once sold will not be taken back.',
+    'Warranty Card or Invoice are mandatory for warranty claim.',
+    'Total warranty includes pro-rata warranty. Please refer to the warranty card for terms and conditions.',
+    'Misuse, bulging, and physical damage are not covered in warranty.',
+    'A discharged battery is not covered in warranty. An extra charging fee will apply.',
+  ],
+  termsAndConditionsMr: [
+    'एकदा विकलेला माल परत घेतला जाणार नाही.',
+    'वॉरंटी दाव्यासाठी वॉरंटी कार्ड किंवा बिल अनिवार्य आहे.',
+    'एकूण वॉरंटीमध्ये प्रो-राटा वॉरंटीचा समावेश आहे. अटी व शर्तींसाठी कृपया वॉरंटी कार्ड पहा.',
+    'गैरवापर, फुगणे आणि भौतिक नुकसान वॉरंटीमध्ये समाविष्ट नाही.',
+    'डिस्चार्ज झालेली बॅटरी वॉरंटीमध्ये समाविष्ट नाही. अतिरिक्त चार्जिंग शुल्क लागू होईल.',
+  ],
   // Ink stamp shown near the signature at the bottom of the invoice
-  stamp: 'data:image/png;base64,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',
+  stamp: 'data:image/png;base64,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',
 }
+
+// Manual PDF logo size controls (millimetres).
+// Change only these two values whenever the printed logo needs resizing.
+const INVOICE_LOGO_WIDTH_MM = 60
+const INVOICE_LOGO_HEIGHT_MM = 40
 
 const initialSales = []
 const SALES_STORAGE_KEY = 'kalyankar-sales'
+const PRODUCT_STOCK_STORAGE_KEY = 'kalyankar-product-stock'
+const PRODUCT_MODELS_STORAGE_KEY = 'kalyankar-product-models'
+const PRODUCT_BRANDS_STORAGE_KEY = 'kalyankar-product-brands'
+const SOLD_SERIALS_STORAGE_KEY = 'kalyankar-sold-serials'
+
+function loadStoredList(key) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || '[]')
+    return Array.isArray(value) ? value : []
+  } catch {
+    return []
+  }
+}
+
+function loadSalesBrands() {
+  const uniqueBrands = new Map(defaultSalesBrands.map((brand) => [brand.toUpperCase(), brand]))
+  loadStoredList(PRODUCT_BRANDS_STORAGE_KEY).forEach((brand) => {
+    const cleanBrand = String(brand || '').trim()
+    if (cleanBrand && !uniqueBrands.has(cleanBrand.toUpperCase())) uniqueBrands.set(cleanBrand.toUpperCase(), cleanBrand)
+  })
+  return [...uniqueBrands.values()].sort((a, b) => a.localeCompare(b))
+}
 
 function loadStoredSales() {
   try {
@@ -109,6 +200,18 @@ function loadStoredSales() {
   } catch {
     return initialSales
   }
+}
+
+function loadSoldSerialNumbers() {
+  const serials = new Set(loadStoredList(SOLD_SERIALS_STORAGE_KEY).map((serial) => String(serial).toUpperCase()))
+  loadStoredSales().forEach((sale) => {
+    const items = Array.isArray(sale.items) && sale.items.length ? sale.items : [sale]
+    items.forEach((item) => {
+      const serial = String(item.serialNumber || '').trim().toUpperCase()
+      if (sale.saleType !== 'Exchange' && serial) serials.add(serial)
+    })
+  })
+  return serials
 }
 
 function generateInvoiceNumber(seq) {
@@ -133,6 +236,7 @@ const createEmptyForm = (seq = 1) => ({
   batteryType: '',
   model: '',
   serialNumber: '',
+  hsn: '',
   oldBatteryWeight: '',
   qty: 1,
   totalAmount: '',
@@ -145,8 +249,8 @@ const createEmptyForm = (seq = 1) => ({
   totalWarranty: 0,
   warrantyType: '',
 
-  cgstRate: 9,
-  sgstRate: 9,
+  cgstRate: getGstSettings().cgstRate,
+  sgstRate: getGstSettings().sgstRate,
 
   paymentMethod: '',
   status: 'Paid',
@@ -192,7 +296,44 @@ function threeDigitWords(n) {
   return twoDigitWords(rest)
 }
 
-function amountInWords(value) {
+const MARATHI_NUMBERS = [
+  'शून्य', 'एक', 'दोन', 'तीन', 'चार', 'पाच', 'सहा', 'सात', 'आठ', 'नऊ', 'दहा',
+  'अकरा', 'बारा', 'तेरा', 'चौदा', 'पंधरा', 'सोळा', 'सतरा', 'अठरा', 'एकोणीस', 'वीस',
+  'एकवीस', 'बावीस', 'तेवीस', 'चोवीस', 'पंचवीस', 'सव्वीस', 'सत्तावीस', 'अठ्ठावीस', 'एकोणतीस', 'तीस',
+  'एकतीस', 'बत्तीस', 'तेहतीस', 'चौतीस', 'पस्तीस', 'छत्तीस', 'सदतीस', 'अडतीस', 'एकोणचाळीस', 'चाळीस',
+  'एकेचाळीस', 'बेचाळीस', 'त्रेचाळीस', 'चव्वेचाळीस', 'पंचेचाळीस', 'सेहेचाळीस', 'सत्तेचाळीस', 'अठ्ठेचाळीस', 'एकोणपन्नास', 'पन्नास',
+  'एकावन्न', 'बावन्न', 'त्रेपन्न', 'चौपन्न', 'पंचावन्न', 'छप्पन्न', 'सत्तावन्न', 'अठ्ठावन्न', 'एकोणसाठ', 'साठ',
+  'एकसष्ट', 'बासष्ट', 'त्रेसष्ट', 'चौसष्ट', 'पासष्ट', 'सहासष्ट', 'सदुसष्ट', 'अडुसष्ट', 'एकोणसत्तर', 'सत्तर',
+  'एकाहत्तर', 'बहात्तर', 'त्र्याहत्तर', 'चौऱ्याहत्तर', 'पंच्याहत्तर', 'शहात्तर', 'सत्याहत्तर', 'अठ्ठ्याहत्तर', 'एकोणऐंशी', 'ऐंशी',
+  'एक्याऐंशी', 'ब्याऐंशी', 'त्र्याऐंशी', 'चौऱ्याऐंशी', 'पंच्याऐंशी', 'शहाऐंशी', 'सत्याऐंशी', 'अठ्ठ्याऐंशी', 'एकोणनव्वद', 'नव्वद',
+  'एक्याण्णव', 'ब्याण्णव', 'त्र्याण्णव', 'चौऱ्याण्णव', 'पंच्याण्णव', 'शहाण्णव', 'सत्त्याण्णव', 'अठ्ठ्याण्णव', 'नव्याण्णव',
+]
+
+function marathiThreeDigitWords(number) {
+  const n = Math.floor(Number(number || 0))
+  if (n < 100) return MARATHI_NUMBERS[n]
+  const hundreds = Math.floor(n / 100)
+  const remainder = n % 100
+  return `${MARATHI_NUMBERS[hundreds]}शे${remainder ? ` ${MARATHI_NUMBERS[remainder]}` : ''}`
+}
+
+function marathiAmountInWords(value) {
+  let n = Math.round(Number(value || 0))
+  if (n === 0) return 'शून्य रुपये फक्त'
+
+  const crore = Math.floor(n / 10000000); n %= 10000000
+  const lakh = Math.floor(n / 100000); n %= 100000
+  const thousand = Math.floor(n / 1000); n %= 1000
+  const parts = []
+  if (crore) parts.push(`${marathiThreeDigitWords(crore)} कोटी`)
+  if (lakh) parts.push(`${marathiThreeDigitWords(lakh)} लाख`)
+  if (thousand) parts.push(`${marathiThreeDigitWords(thousand)} हजार`)
+  if (n) parts.push(marathiThreeDigitWords(n))
+  return `${parts.join(' ')} रुपये फक्त`
+}
+
+function amountInWords(value, outputLanguage = 'en') {
+  if (outputLanguage === 'mr') return marathiAmountInWords(value)
   let n = Math.round(Number(value || 0))
   if (n === 0) return 'Zero Rupees Only'
 
@@ -210,11 +351,7 @@ function amountInWords(value) {
   return `${parts.join(' ')} Rupees Only`
 }
 
-function choosePrintLanguage() {
-  return window.confirm('Bill Marathi madhe print karaycha ka?\nOK = Marathi, Cancel = English') ? 'mr' : 'en'
-}
-
-function openPrintWindow(html) {
+function openPrintWindow(html, afterPrintUrl = '') {
   const printWindow = window.open('', '_blank', 'width=950,height=1050')
   if (!printWindow) {
     alert('Please allow pop-ups to print the invoice.')
@@ -223,57 +360,117 @@ function openPrintWindow(html) {
   printWindow.document.open()
   printWindow.document.write(html)
   printWindow.document.close()
+  if (afterPrintUrl) {
+    printWindow.onafterprint = () => { printWindow.location.href = afterPrintUrl }
+  }
   printWindow.focus()
   setTimeout(() => {
     printWindow.print()
   }, 350)
 }
 
-function renderInvoiceHTML(fields, printLanguage = 'en') {
+function safeFilePart(value) {
+  return String(value || 'Customer').trim().replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, '-').slice(0, 70) || 'Customer'
+}
+
+function customerWhatsAppUrl(phone, customer, fileName) {
+  let digits = String(phone || '').replace(/\D/g, '')
+  if (digits.length === 10) digits = `91${digits}`
+  else if (digits.startsWith('0') && digits.length === 11) digits = `91${digits.slice(1)}`
+  const message = `Hello ${customer || 'Customer'}, your invoice PDF ${fileName} is ready. Please attach the downloaded PDF to this chat.`
+  return `https://wa.me/${digits}?text=${encodeURIComponent(message)}`
+}
+
+async function downloadInvoicePdf(html, fileName) {
+  const frame = document.createElement('iframe')
+  frame.setAttribute('aria-hidden', 'true')
+  frame.style.cssText = 'position:fixed;left:-12000px;top:0;width:1120px;height:800px;border:0;opacity:0;pointer-events:none'
+  document.body.appendChild(frame)
+  try {
+    frame.contentDocument.open()
+    frame.contentDocument.write(html)
+    frame.contentDocument.close()
+    const pdfLayout = frame.contentDocument.createElement('style')
+    const singleCopy = Boolean(frame.contentDocument.querySelector('.print-page.single-copy'))
+    pdfLayout.textContent = `
+      html, body {
+        width: ${singleCopy ? '138mm' : '287mm'} !important;
+        height: 200mm !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+      }
+      .print-page {
+        width: ${singleCopy ? '138mm' : '287mm'} !important;
+        height: 198mm !important;
+        display: flex !important;
+        ${singleCopy ? 'padding: 1mm !important;' : ''}
+      }
+      .bill-copy {
+        height: ${singleCopy ? '196mm' : '198mm'} !important;
+        ${singleCopy ? 'width: 136mm !important;' : ''}
+        break-inside: auto !important;
+        page-break-inside: auto !important;
+      }
+    `
+    frame.contentDocument.head.appendChild(pdfLayout)
+    await new Promise((resolve) => window.setTimeout(resolve, 450))
+    const images = [...frame.contentDocument.images]
+    await Promise.all(images.map((image) => image.complete ? Promise.resolve() : new Promise((resolve) => { image.onload = resolve; image.onerror = resolve })))
+    const invoicePage = frame.contentDocument.querySelector('.print-page')
+    const canvas = await html2canvas(invoicePage, {
+      scale: 1.6,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+      width: invoicePage.scrollWidth,
+      height: invoicePage.scrollHeight,
+      windowWidth: invoicePage.scrollWidth,
+      windowHeight: invoicePage.scrollHeight,
+    })
+    const pdf = new jsPDF({ orientation: singleCopy ? 'portrait' : 'landscape', unit: 'mm', format: singleCopy ? 'a5' : 'a4', compress: true })
+    const pageWidth = pdf.internal.pageSize.getWidth()
+    const pageHeight = pdf.internal.pageSize.getHeight()
+    const margin = 5
+    const maxWidth = pageWidth - margin * 2
+    const maxHeight = pageHeight - margin * 2
+    const imageRatio = canvas.width / canvas.height
+    let imageWidth = maxWidth
+    let imageHeight = imageWidth / imageRatio
+    if (imageHeight > maxHeight) {
+      imageHeight = maxHeight
+      imageWidth = imageHeight * imageRatio
+    }
+    const imageX = (pageWidth - imageWidth) / 2
+    const imageY = (pageHeight - imageHeight) / 2
+    pdf.addImage(canvas.toDataURL('image/jpeg', 0.97), 'JPEG', imageX, imageY, imageWidth, imageHeight, undefined, 'FAST')
+    const blob = pdf.output('blob')
+    const file = new File([blob], fileName, { type: 'application/pdf' })
+    const url = URL.createObjectURL(file)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    link.style.display = 'none'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500)
+    return file
+  } finally {
+    frame.remove()
+  }
+}
+
+function renderInvoiceHTML(fields, printLanguage = 'en', options = {}) {
+  const copies = options.copies === 1 ? 1 : 2
   const {
     invoice, date, salesPerson, customer, phone, address, gstNumber,
     vehicleName, vehicleNumber, saleType, exchange,
-    brand, batteryType, model, serialNumber, oldBatteryWeight, qty, unitPrice, discount, taxableAmount,
-    cgstRate, sgstRate, cgstAmount, sgstAmount, grandTotal,
+    brand, batteryType, model, serialNumber, oldBatteryWeight, qty, unitPrice, discount, discountPercent, taxableAmount,
+    hsn, cgstRate, sgstRate, cgstAmount, sgstAmount, grandTotal,
     paidAmount, dueAmount, status, warrantyPeriod, totalWarranty, warrantyType, paymentMethod, notes,
-    paymentHistory,
+    paymentHistory, items = [],
   } = fields
-
-  const exchangeRow = ''
-
-  // Builds the "Payment History" block for the print-out — every payment
-  // (the original amount paid at sale time, plus any later due settlements)
-  // is listed with its own date, amount and method, so a customer who pays
-  // off a due balance later gets a printed record showing what was paid
-  // when.
-  const paymentHistoryBlock =
-    paymentHistory && paymentHistory.length > 0
-      ? `<div class="payment-history-block">
-          <h4>Payment History</h4>
-          <table class="payment-history-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Date Paid</th>
-                <th class="num">Amount Paid</th>
-                <th>Method</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${paymentHistory
-                .map(
-                  (entry, index) => `<tr>
-                    <td>${index + 1}</td>
-                    <td>${entry.date || '—'}</td>
-                    <td class="num">&#8377; ${formatCurrency(entry.amount)}</td>
-                    <td>${entry.method || '—'}</td>
-                  </tr>`
-                )
-                .join('')}
-            </tbody>
-          </table>
-        </div>`
-      : ''
 
   const labels = printLanguage === 'mr'
     ? {
@@ -287,24 +484,37 @@ function renderInvoiceHTML(fields, printLanguage = 'en') {
         invoiceNo: 'बिल नं.',
         vehicleName: 'वाहनाचे नाव',
         vehicleNo: 'वाहन नं.',
+        vehicle: 'वाहन नाव व नं.',
         sr: 'क्र.',
         desc: 'मालाचे वर्णन',
         serial: 'सिरीयल नं.',
         hsn: 'HSN',
         qty: 'नग',
         rate: 'दर',
-        discount: 'सवलत',
+        discount: 'सवलत (%)',
         total: 'एकूण',
         batteryName: 'बॅटरी नाव',
         model: 'मॉडेल',
         warranty: 'वॉरंटी',
         amountWords: 'अक्षरी रु',
-        cgst: 'CGST%',
-        sgst: 'SGST%',
+        cgst: 'CGST',
+        sgst: 'SGST',
         grandTotal: 'एकूण',
+        taxableAmount: 'करपात्र रक्कम',
+        paymentMethod: 'पेमेंट पद्धत',
+        paidAmount: 'भरलेली रक्कम',
+        duePayment: 'बाकी पेमेंट',
+        billTo: 'बिल:',
+        contactNo: 'संपर्क नं.',
+        bankDetails: 'बँक तपशील',
+        companyName: 'कंपनी नाव',
+        accountHolderName: 'A/C धारक नाव',
+        accountNumber: 'A/C नंबर',
+        ifsCode: 'IFS कोड',
         customerCopy: 'ग्राहक प्रत',
         officeCopy: 'ऑफिस प्रत',
         signature: 'kalyankar batteries',
+        terms: 'अटी व शर्ती',
       }
     : {
         title: 'Tax Invoice',
@@ -317,75 +527,182 @@ function renderInvoiceHTML(fields, printLanguage = 'en') {
         invoiceNo: 'Invoice No',
         vehicleName: 'Vehicle Name',
         vehicleNo: 'Vehicle No',
+        vehicle: 'Vehicle Name & No.',
         sr: 'sr.',
         desc: 'Product Description',
         serial: 'sr.no',
         hsn: 'HSN',
         qty: 'Qty',
         rate: 'Rate',
-        discount: 'Dis.',
+        discount: 'Dis. (%)',
         total: 'Total',
         batteryName: 'Battery name',
         model: 'model',
         warranty: 'warranty',
         amountWords: 'Amount in words',
-        cgst: 'CGST%',
-        sgst: 'SGST%',
+        cgst: 'CGST',
+        sgst: 'SGST',
         grandTotal: 'G. Total',
+        taxableAmount: 'Taxable Amount',
+        paymentMethod: 'Payment Method',
+        paidAmount: 'Paid Amount',
+        duePayment: 'Due Payment',
+        billTo: 'Bill to',
+        contactNo: 'Contact No',
+        bankDetails: 'Bank Details',
+        companyName: 'Company name',
+        accountHolderName: 'A/C holder name',
+        accountNumber: 'A/C number',
+        ifsCode: 'IFS code',
         customerCopy: 'Customer Copy',
         officeCopy: 'Office Copy',
         signature: 'kalyankar batteries',
+        terms: 'T&C',
       }
 
-  const hsnCode = fields.hsn || '8507'
-  const copyMarkup = (copyLabel) => `
-    <section class="bill-copy">
-      <div class="copy-label">${copyLabel}</div>
-      <div class="bill-header">
-        <img src="${mainLogo}" alt="${SHOP_INFO.name}" class="shop-logo" onerror="this.style.display='none'" />
-        <div class="shop-address">
-          ${printLanguage === 'mr'
-            ? 'शिंदे कॉम्प्लेक्स, मेन रोड, गारगोटी<br/>ता भुदरगड, जि कोल्हापूर, 416209'
-            : 'Shinde Complex, Main Road, Gargoti<br/>Tal. Bhudargad, Dist. Kolhapur, 416209'}
+  const hsnCode = hsn || ''
+  const shopDetails = printLanguage === 'mr'
+    ? {
+        name: '\u0915\u0932\u094d\u092f\u093e\u0923\u0915\u0930 \u092c\u0945\u091f\u0930\u0940\u091c',
+        address: '\u0917\u093e\u0930\u0917\u094b\u091f\u0940 - \u0915\u094b\u0932\u094d\u0939\u093e\u092a\u0942\u0930 \u092e\u0947\u0928 \u0930\u094b\u0921, \u0917\u093e\u0930\u0917\u094b\u091f\u0940 416209',
+        addressLabel: '\u092a\u0924\u094d\u0924\u093e',
+        landmark: '\u0938\u094d\u0935\u093e\u092e\u0940 \u0938\u092e\u0930\u094d\u0925 \u092e\u0902\u0917\u0932 \u0915\u093e\u0930\u094d\u092f\u093e\u0932\u092f\u093e\u091c\u0935\u0933',
+        landmarkLabel: '\u0913\u0933\u0916',
+        contactLabel: '\u0938\u0902\u092a\u0930\u094d\u0915',
+        whatsappLabel: 'व्हाट्सअँप',
+        emailLabel: '\u0908\u092e\u0947\u0932',
+        gstinLabel: 'GSTIN',
+      }
+    : {
+        name: SHOP_INFO.name,
+        address: 'Gargoti - Kolhapur Main Road, Gargoti 416209',
+        addressLabel: 'Address',
+        landmark: 'Near Swami Samarth Mangal Karyalay',
+        landmarkLabel: 'Landmark',
+        contactLabel: 'Contact',
+        whatsappLabel: 'WhatsApp No',
+        emailLabel: 'Email',
+        gstinLabel: 'GSTIN',
+      }
+  // Resolve the supplied print logo so it also loads correctly in the print popup.
+  const printableLogo = new URL(salesPrintLogo, window.location.origin).href
+  const paymentSettings = getPaymentSettings()
+  const printableQr = paymentSettings.qrImage || new URL(paymentQr, window.location.origin).href
+  const itemTotal = saleType === 'Exchange' ? taxableAmount : Math.max(Number(qty || 1) * Number(unitPrice || 0), 0)
+  const printDiscountPercent = saleType === 'Regular' ? Number(discountPercent || 0) : 0
+  const printTerms = printLanguage === 'mr' ? SHOP_INFO.termsAndConditionsMr : SHOP_INFO.termsAndConditions
+
+  const isOldStock = saleType === 'Exchange'
+  const serialHeader = isOldStock ? '' : `<th>${labels.serial}</th>`
+  const serialCell = isOldStock ? '' : `<td>${serialNumber || ''}</td>`
+  const discountHeader = isOldStock ? '' : `<th>${labels.discount}</th>`
+  const discountCell = isOldStock ? '' : `<td class="num">${formatCurrency(printDiscountPercent)}%</td>`
+  const productDescription = [brand, model].filter(Boolean).join(' ')
+  const warrantyDescription = warrantyPeriod
+    ? `${warrantyPeriod}${totalWarranty ? ` (${totalWarranty} Months)` : ''}${warrantyType ? ` — ${warrantyType}` : ''}`
+    : ''
+  const multiItems = Array.isArray(items) ? items : []
+  const multiRows = multiItems.map((item, index) => {
+    const warranty = item.warrantyPeriod
+      ? `${item.warrantyPeriod}${item.totalWarranty ? ` (${item.totalWarranty} Months)` : ''}${item.warrantyType ? ` — ${item.warrantyType}` : ''}`
+      : ''
+    return `<tr>
+      <td>${index + 1}</td>
+      <td class="product-description"><strong>${[item.brand, item.model].filter(Boolean).join(' ')}</strong>${warranty ? `<small>${labels.warranty}: ${warranty}</small>` : ''}<small>GST: ${Number(item.cgstRate || 0) + Number(item.sgstRate || 0)}%</small></td>
+      <td>${item.serialNumber || ''}</td><td>${item.hsn || ''}</td><td>${item.qty || 1}</td>
+      <td class="num">${formatCurrency(item.unitPrice)}</td><td class="num">${formatCurrency(item.discountPercent || 0)}%</td>
+      <td class="num">${formatCurrency(item.taxableAmount)}</td>
+    </tr>`
+  }).join('')
+  const multiTable = multiItems.length >= 2 ? `<table class="items open-items multi-items">
+    <thead><tr><th>${labels.sr}</th><th>${labels.desc}</th><th>${labels.serial}</th><th>${labels.hsn}</th><th>${labels.qty}</th><th>${labels.rate}</th><th>${labels.discount}</th><th>${labels.total}</th></tr></thead>
+    <tbody>${multiRows}</tbody></table>` : ''
+  const copyMarkup = () => `
+    <section class="bill-copy${multiItems.length >= 2 ? ' multi-copy' : ''}">
+      <div class="header-row">
+        <div class="shop-header">
+          <div class="logo-box">
+            <img src="${printableLogo}" alt="${SHOP_INFO.name}" onerror="this.style.display='none'" />
+          </div>
         </div>
-        <div class="shop-contact"><span>Phone no: ${SHOP_INFO.phone}</span><span>Email: ${SHOP_INFO.email}</span></div>
+        <div class="qr-box">
+          <img src="${printableQr}" alt="Scan to pay" onerror="this.style.display='none'" />
+          <small>${paymentSettings.upiId || SHOP_INFO.upiId}</small>
+        </div>
       </div>
-      <div class="bill-line"></div>
-      <div class="gst-date-row"><span>${labels.gstin}: ${SHOP_INFO.gstin}</span><span>${labels.date}: ${date}</span></div>
-      <div class="customer-grid">
-        <div>
-          <div class="field-row">${labels.customerName}: ${customer || ''}</div>
-          <div class="field-row">${labels.address}: ${address || ''}</div>
-          <div class="field-row">${labels.address}: </div>
-          <div class="field-row">${labels.phone}: ${phone || ''}</div>
-          <div class="field-row">${labels.customerGstin}: ${gstNumber || ''}</div>
+
+      <div class="shop-details">
+        <h3>${shopDetails.name || SHOP_INFO.name}</h3>
+        <div class="shop-detail-row"><span>${shopDetails.addressLabel}:</span><strong>${shopDetails.address}</strong></div>
+        <div class="shop-detail-row"><span>${shopDetails.landmarkLabel}:</span><strong>${shopDetails.landmark}</strong></div>
+        <div class="shop-detail-row"><span>${shopDetails.contactLabel}:</span><strong>+91 ${SHOP_INFO.phone}</strong></div>
+        <div class="shop-detail-row"><span>${shopDetails.gstinLabel}:</span><strong>${SHOP_INFO.gstin}</strong></div>
+        <div class="shop-detail-row"><span>${shopDetails.emailLabel}:</span><strong>${SHOP_INFO.email}</strong></div>
+      </div>
+
+      <div class="bill-info-row">
+        <div class="bill-info-col bill-to-box">
+          <div class="field-label">${labels.billTo}:</div>
+          <div class="field-row"><span>${labels.customerName}:</span> <strong>${customer || ''}</strong></div>
+          <div class="field-row"><span>${labels.address}:</span> <strong>${address || ''}</strong></div>
+          <div class="field-row"><span>${labels.contactNo}:</span> <strong>${phone || ''}</strong></div>
+          <div class="field-row"><span>${labels.customerGstin}:</span> <strong>${gstNumber || '—'}</strong></div>
         </div>
-        <div>
-          <div class="field-row">${labels.invoiceNo}: ${invoice || ''}</div>
-          <div class="field-row">${labels.vehicleName}: ${vehicleName || ''}</div>
-          <div class="field-row">${labels.vehicleNo}: ${vehicleNumber || ''}</div>
+        <div class="bill-info-col align-right">
+          <div class="invoice-heading">GST INVOICE</div>
+          <div class="field-row"><span>${labels.date}:</span> <strong>${date || ''}</strong></div>
+          <div class="field-row"><span>${labels.invoiceNo}:</span> <strong>${invoice || ''}</strong></div>
+          <div class="field-row"><span>${printLanguage === 'mr' ? '\u092a\u0947\u092e\u0947\u0902\u091f' : 'Payment'}:</span> <strong>${paymentMethod || ''}</strong></div>
+          <div class="field-row"><span>${printLanguage === 'mr' ? '\u0938\u094d\u0925\u093f\u0924\u0940' : 'Status'}:</span> <strong>${status || ''}</strong></div>
         </div>
       </div>
-      <table class="items">
-        <thead><tr><th>${labels.sr}</th><th>${labels.desc}</th><th>${labels.serial}</th><th>${labels.hsn}</th><th>${labels.qty}</th><th>${labels.rate}</th><th>${labels.discount}</th><th>${labels.total}</th></tr></thead>
+
+      ${multiItems.length >= 2 ? multiTable : `<table class="items open-items">
+        <thead>
+          <tr>
+            <th>${labels.sr}</th><th>${labels.desc}</th>${serialHeader}<th>${labels.hsn}</th>
+            <th>${labels.qty}</th><th>${labels.rate}</th>${discountHeader}<th>${labels.total}</th>
+          </tr>
+        </thead>
         <tbody>
-          <tr><td>1</td><td>${brand || ''} ${batteryType || ''}</td><td>${serialNumber || ''}</td><td>${hsnCode}</td><td>${qty || ''}</td><td class="num">${formatCurrency(unitPrice)}</td><td class="num">${formatCurrency(discount)}</td><td class="num">${formatCurrency(taxableAmount)}</td></tr>
-          <tr><td></td><td>${labels.batteryName}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td>${labels.model}: ${model || ''}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-          <tr><td></td><td>${labels.warranty}: ${warrantyPeriod || ''}</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>
-          ${Array.from({ length: 3 }).map(() => '<tr><td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>').join('')}
+          <tr>
+            <td>1</td>
+            <td class="product-description"><strong>${productDescription || ''}</strong>${warrantyDescription ? `<small>Warranty: ${warrantyDescription}</small>` : ''}</td>
+            ${serialCell}
+            <td>${hsnCode}</td>
+            <td>${qty || ''}</td>
+            <td class="num">${formatCurrency(unitPrice)}</td>
+            ${discountCell}
+            <td class="num">${formatCurrency(itemTotal)}</td>
+          </tr>
         </tbody>
-      </table>
-      <div class="below-table">
-        <div class="amount-words">${labels.amountWords}</div>
+      </table>`}
+
+      <div class="spacer"></div>
+
+      <div class="amount-row">
+        <div class="amount-words"><strong>${labels.amountWords}:</strong> ${amountInWords(grandTotal, printLanguage)}</div>
         <div class="totals-box">
-          <div class="line"><span>add: ${labels.cgst} :</span><strong>${formatCurrency(cgstAmount)}</strong></div>
-          <div class="line"><span>${labels.sgst} :</span><strong>${formatCurrency(sgstAmount)}</strong></div>
-          <div class="line"><span>${labels.grandTotal} :</span><strong>${formatCurrency(grandTotal)}</strong></div>
+          <div class="totals-line"><span>${labels.taxableAmount}</span><strong>${formatCurrency(taxableAmount)}</strong></div>
+          <div class="totals-line"><span>${labels.cgst} (${cgstRate || 0}%)</span><strong>${formatCurrency(cgstAmount)}</strong></div>
+          <div class="totals-line"><span>${labels.sgst} (${sgstRate || 0}%)</span><strong>${formatCurrency(sgstAmount)}</strong></div>
+          <div class="totals-line grand"><span>${labels.grandTotal}</span><strong>${formatCurrency(grandTotal)}</strong></div>
+          <div class="totals-line soft"><span>${labels.paymentMethod}</span><strong>${paymentMethod || ''}</strong></div>
+          <div class="totals-line soft"><span>${labels.paidAmount}</span><strong>${formatCurrency(paidAmount)}</strong></div>
+          <div class="totals-line soft"><span>${labels.duePayment}</span><strong>${formatCurrency(dueAmount)}</strong></div>
         </div>
       </div>
-      <div class="signature-space"></div>
-      <div class="signature-line"><div class="line-mark">${labels.signature}</div></div>
+
+      <div class="footer-row">
+        <div class="terms-block">
+          <div class="field-label">${labels.terms}:</div>
+          <ol>${printTerms.map((term) => `<li>${term}</li>`).join('')}</ol>
+        </div>
+        <div class="signature-block">
+          <h3>KALYANKAR BATTERIES</h3>
+          <span>Authorised Signature</span>
+        </div>
+      </div>
     </section>
   `
 
@@ -395,216 +712,228 @@ function renderInvoiceHTML(fields, printLanguage = 'en') {
 <meta charset="utf-8" />
 <title>${invoice} — Tax Invoice</title>
 <style>
-  * { box-sizing: border-box; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   body {
     font-family: Arial, Helvetica, sans-serif;
     color: #111;
     margin: 0;
-    padding: 18px;
-    font-size: 13px;
-    line-height: 1.15;
-  }
-  .invoice-sheet { display: none; }
-  .print-page { width: 190mm; margin: 0 auto; }
-  .bill-copy { position: relative; min-height: 138mm; padding: 4mm 5mm 3mm; border-bottom: 1px dashed #777; page-break-inside: avoid; break-inside: avoid; }
-  .bill-copy:last-child { border-bottom: 0; }
-  .copy-label { position: absolute; right: 5mm; top: 3mm; font-size: 10px; font-weight: 700; color: #666; }
-
-  .bill-header { text-align: center; margin-bottom: 4px; }
-  .shop-logo { width: 290px; max-width: 80%; height: auto; object-fit: contain; display: block; margin: 0 auto 4px; }
-  .shop-address { font-size: 16px; font-weight: 700; line-height: 1.18; margin-top: 4px; }
-  .shop-contact { width: 100%; margin-top: 4px; font-size: 14px; display: grid; grid-template-columns: 1fr 1fr; text-align: left; }
-  .shop-contact span:last-child { text-align: left; }
-
-  .bill-line { border-top: 1px solid #111; margin: 2px 0; }
-  .gst-date-row { display: grid; grid-template-columns: 1fr 1fr; border-bottom: 1px solid #111; padding: 3px 0 2px; font-size: 14px; }
-  .gst-date-row span:first-child { padding-left: 48px; }
-  .gst-date-row span:last-child { text-align: right; padding-right: 34px; }
-
-  .customer-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 28px; padding: 4px 32px 0; font-size: 14px; }
-  .field-row { min-height: 18px; white-space: nowrap; }
-  .field-row strong { font-weight: 500; }
-
-  table.items { width: 100%; border-collapse: collapse; margin-top: 2px; font-size: 13px; }
-  table.items th, table.items td { border: 1px solid #111; padding: 2px 4px; height: 20px; font-weight: 400; }
-  table.items th { text-align: center; }
-  table.items .desc { width: 32%; }
-  table.items .sr { width: 6%; text-align: center; }
-  table.items .num { text-align: right; }
-  .product-line td { height: 22px; }
-  .num { text-align: right; }
-
-  .below-table { display: grid; grid-template-columns: 1fr 170px; gap: 12px; align-items: start; margin-top: 0; }
-  .amount-words { padding-left: 48px; padding-top: 4px; font-weight: 700; min-height: 44px; }
-  .totals-box { font-size: 14px; }
-  .totals-box .line { display: grid; grid-template-columns: 1fr 72px; align-items: center; min-height: 20px; }
-  .totals-box .line span { text-align: right; padding-right: 4px; }
-  .totals-box .line strong { border: 1px solid #111; height: 20px; padding: 2px 4px; font-weight: 400; text-align: right; }
-
-  .payment-history-block {
-    margin-top: 12px; font-family: Arial, sans-serif;
-    border: 1px solid #e3e8f0; border-radius: 6px; padding: 10px 12px; background: #fbfcfe;
-  }
-  .payment-history-block h4 {
-    margin: 0 0 8px; font-size: 11px; letter-spacing: 0.6px; text-transform: uppercase;
-    color: #6b7688; border-bottom: 1px solid #eef1f7; padding-bottom: 6px;
-  }
-  table.payment-history-table { width: 100%; border-collapse: collapse; }
-  table.payment-history-table th {
-    background: #f2f5fa; color: #4f5e75; font-size: 10px; text-transform: uppercase;
-    padding: 5px 7px; text-align: left; border-bottom: 1px solid #e3e8f0;
-  }
-  table.payment-history-table td { padding: 5px 7px; font-size: 10.5px; border-bottom: 1px solid #eef1f7; color: #26314a; }
-  table.payment-history-table tr:last-child td { border-bottom: none; }
-
-  .notes { margin-top: 10px; font-size: 11px; color: #333; }
-  .signature-space { height: 82px; }
-  .signatures { display: flex; justify-content: space-between; align-items: flex-end; margin-top: 6px; font-family: Arial, sans-serif; }
-  .signature-line { width: 220px; text-align: center; }
-  .signature-line .line-mark { border-top: 1px solid #111; padding-top: 4px; font-size: 13px; color: #111; }
-  .shop-stamp {
-    width: 210px; height: auto; max-height: 92px; object-fit: contain; margin: 0 auto 4px; display: block;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.2;
+    overflow: hidden;
   }
 
-  .doc-footer {
-    text-align: center; margin-top: 8px; font-family: Arial, sans-serif; font-size: 10px; color: #333;
+  .print-page {
+    width: 100%;
+    display: flex;
+    gap: 8mm;
+    position: relative;
+  }
+  .print-page.single-copy { width: 138mm; gap: 0; padding: 1mm; }
+  .print-page.single-copy::before { display: none; }
+  .print-page.single-copy .bill-copy { width: 136mm; height: 196mm; }
+  .print-page::before {
+    content: '';
+    position: absolute;
+    top: -3mm;
+    bottom: -3mm;
+    left: 50%;
+    border-left: 1px dashed #111;
   }
 
-  @page { size: A4 portrait; margin: 8mm; }
+  .bill-copy {
+    width: calc(50% - 4mm);
+    height: 198mm;
+    border: 1px solid #111;
+    padding: 4mm;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .header-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    margin-bottom: 1mm;
+    flex-shrink: 0;
+  }
+  .shop-header { width: ${INVOICE_LOGO_WIDTH_MM}mm; }
+  .logo-box {
+    width: ${INVOICE_LOGO_WIDTH_MM}mm; height: ${INVOICE_LOGO_HEIGHT_MM}mm;
+    display: flex; align-items: center; justify-content: center; overflow: visible;
+    border: 0;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+  }
+  .logo-box img { width: 100%; height: 100%; object-fit: contain; object-position: center; display: block; }
+  .shop-details { width: calc(100% - 36mm); min-height: 32mm; margin: 0 0 3mm; color: #172033; font-size: 9.5px; line-height: 1.22; background-color:#bfe8f7 !important; box-shadow:inset 0 0 0 1000px #bfe8f7; border:1px solid #79c9e7; border-radius:4mm; padding:3mm 4mm; flex-shrink: 0; }
+  .shop-details h3 { margin: 0 0 1.2mm; color: #0b3475; font-size: 14px; line-height: 1.1; font-weight: 900; }
+  .shop-detail-row { display: flex; gap: 0; margin: .65mm 0; align-items: baseline; }
+  .shop-details span { color: #334155; font-weight: 500; }
+  .shop-details strong { color: inherit; font-weight: 900 !important; }
+  body.marathi-print, body.marathi-print .shop-details { font-family: "Nirmala UI", Mangal, Arial, sans-serif; }
+  body.marathi-print .shop-details, body.marathi-print .shop-details span, body.marathi-print .shop-details strong, body.marathi-print .shop-details h3 { font-weight: 900 !important; }
+  .qr-box {
+    width: 32mm; height: 32mm;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; overflow: hidden;
+    font-size: 10px; color: #888;
+  }
+  .qr-box img { width: 27mm; height: 27mm; object-fit: contain; }
+  .qr-box small { width: 100%; margin-top: .5mm; color: #172033; font-size: 6px; font-weight: 700; text-align: center; overflow-wrap: anywhere; }
+
+  .bill-info-row {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 4mm;
+    margin-bottom: 1.5mm; padding: 1.5mm;
+    border: 1px solid #8fcfe5; border-radius: 2mm; background: #ffffff;
+    flex-shrink: 0;
+  }
+  .bill-to-box { background: #eefaff; border-left: 3px solid #66c5e8; border-radius: 1.5mm; padding: 1.5mm; }
+  .bill-info-col.align-right { text-align: left; transform: translateX(0.5mm); padding: 0; }
+  .invoice-heading { margin: 0 0 1mm; padding: 1.5mm 2mm; background-color: #bfe8f7 !important; box-shadow: inset 0 0 0 1000px #bfe8f7; border: 1px solid #8fcfe5; color: #0f2747; font-size: 14px; font-weight: 900; letter-spacing: .16em; text-align: center; }
+  .bill-info-col.align-right .field-row span { color: #111; font-weight: 700; }
+  .field-label { font-weight: 700; margin-bottom: 1mm; font-size: 10px; }
+  .field-row { margin-bottom: 0.75mm; font-size: 9.5px; }
+  .field-row span { color: #444; margin-right: 3px; }
+  .field-row.terms { font-size: 9px; color: #555; }
+
+  table.items { width: 100%; border-collapse: collapse; font-size: 8.8px; border: 1px solid #d7e0ea; flex-shrink: 0; }
+  table.items th, table.items td {
+    border: 0;
+    padding: 1.5mm 1.2mm;
+    text-align: left;
+  }
+  table.items th {
+    background-color: #bfe8f7 !important;
+    box-shadow: inset 0 0 0 1000px #bfe8f7;
+    color: #173b70;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border-bottom: 1px solid #cbd5e1;
+  }
+  table.items tbody tr { border-bottom: 1px solid #d9dee8; }
+  table.items tbody td { color: #172033; font-weight: 700; }
+  table.items .num, table.items td:nth-child(6),
+  table.items td:nth-child(7), table.items td:nth-child(8) { text-align: right; }
+  .product-description small { display: block; margin-top: 1mm; color: #475569; font-size: 8px; font-weight: 600; }
+  table.multi-items { font-size: 7.5px; }
+  table.multi-items th { font-size: 6.8px; padding: 1.7mm 1mm; }
+  table.multi-items td { padding: 1.8mm 1mm; vertical-align: top; }
+
+  .spacer { flex: 0 0 2mm; min-height: 2mm; }
+
+  .amount-row {
+    display: grid; grid-template-columns: 1fr 52mm; gap: 4mm; align-items: start;
+    margin-top: 1mm;
+    margin-bottom: 1.5mm;
+    flex-shrink: 0;
+  }
+  .amount-words { align-self: end; font-size: 10px; padding-bottom: 1mm; }
+  .totals-box { width: 52mm; color: #1f2a44; }
+  .totals-line {
+    display: flex; justify-content: space-between; gap: 8mm;
+    padding: 0.55mm 0;
+    border-bottom: none;
+    font-size: 10.5px;
+  }
+  .totals-line strong { min-width: 26mm; text-align: right; color: #111827; }
+  .totals-line.grand {
+    margin-top: 1mm;
+    padding: 1.2mm 1.5mm;
+    border-top: 2px solid #5fb9dd;
+    border-bottom: 1px solid #8fcfe5;
+    background-color: #bfe8f7 !important;
+    box-shadow: inset 0 0 0 1000px #bfe8f7;
+    font-size: 14px;
+    font-weight: 700;
+  }
+  .totals-line.grand strong { font-size: 17px; }
+  .totals-line.soft { color: #3f4b62; padding-top: 0.8mm; padding-bottom: 0.8mm; }
+
+  .footer-row { min-height: 22mm; margin-top: 0; display: grid; grid-template-columns: 1.85fr 1fr; gap: 4mm; border-top: 1px solid #d9e2ec; padding-top: 1mm; padding-bottom: 1mm; flex: 0 0 auto; }
+  .terms-block { min-width: 0; font-size: 6.4px; line-height: 1.08; color: #334155; overflow-wrap: anywhere; }
+  .terms-block .field-label { color: #0f2747; margin-bottom: 1mm; }
+  .terms-block ol { margin: 0; padding-left: 3.5mm; }
+  .terms-block li { margin-bottom: 0.15mm; }
+  .signature-block { min-height: 18mm; align-self: stretch; display: flex; flex-direction: column; justify-content: center; gap: 1mm; text-align: right; padding: 1mm 0; font-weight: 700; }
+  .signature-block h3 { margin: 0; font-size: 13px; font-weight: 800; }
+  .signature-block span { font-size: 8px; color: #334155; font-weight: 700; }
+
+  .multi-copy .logo-box { width: ${INVOICE_LOGO_WIDTH_MM}mm; height: ${INVOICE_LOGO_HEIGHT_MM}mm; }
+  .multi-copy .shop-header { width: ${INVOICE_LOGO_WIDTH_MM}mm; }
+  .multi-copy .header-row, .multi-copy .bill-info-row { margin-bottom: 2mm; }
+  .multi-copy .bill-to-box { padding: 2mm; }
+  .multi-copy .field-row { margin-bottom: 1mm; }
+  .multi-copy .amount-row { margin-top: 1mm; margin-bottom: 2mm; }
+  .multi-copy .totals-line { padding-top: 0.75mm; padding-bottom: 0.75mm; }
+
+  @page { size: A4 landscape; margin: 5mm; }
   @media print {
-    html, body { width: 210mm; min-height: 297mm; margin: 0; padding: 0; }
-    body { padding: 0; font-size: 13px; line-height: 1.15; }
-    .print-page { width: 100%; }
-    .bill-copy { min-height: 140mm; padding: 3mm 4mm 2mm; }
-    .invoice-sheet { display: none; }
-    .doc-header, .info-grid, table.items, .totals-wrap, .payment-history-block, .words-box, .warranty-note, .signatures, .doc-footer {
-      page-break-inside: avoid; break-inside: avoid;
+    html, body { width: 287mm; height: 200mm; margin: 0; padding: 0; overflow: hidden; }
+    .print-page { width: 100%; display: flex; gap: 8mm; }
+    .print-page::before {
+      content: '';
+      position: fixed;
+      top: 3mm;
+      bottom: 3mm;
+      left: 50%;
+      border-left: 1px dashed #111;
     }
+    .bill-copy { page-break-inside: avoid; break-inside: avoid; }
   }
 </style>
 </head>
-<body>
-  <main class="print-page">
-    ${copyMarkup(labels.customerCopy)}
-    ${copyMarkup(labels.officeCopy)}
+<body class="${printLanguage === 'mr' ? 'marathi-print' : ''}">
+  <main class="print-page${copies === 1 ? ' single-copy' : ''}">
+    ${copyMarkup()}
+    ${copies === 2 ? copyMarkup() : ''}
   </main>
-  <div class="invoice-sheet">
-    <div class="doc-header">
-      <div class="shop-brand">
-        <div>
-          <img
-            src="${SHOP_INFO.logo}"
-            alt="${SHOP_INFO.name} logo"
-            class="shop-logo"
-            onerror="this.style.display='none'"
-          />
-          <div class="shop-meta">
-            <strong>${SHOP_INFO.address}</strong><br/>
-            Phone: ${SHOP_INFO.phone} &nbsp;|&nbsp; ${SHOP_INFO.email}<br/>
-            GSTIN: ${SHOP_INFO.gstin}
-          </div>
-        </div>
-      </div>
-      <div class="invoice-tag">
-        <div class="badge-title">TAX INVOICE</div>
-        <div class="row"><strong>Invoice No:</strong> ${invoice}</div>
-        <div class="row"><strong>Date:</strong> ${date}</div>
-        <div class="row"><strong>Sale Type:</strong> ${saleType}</div>
-        <div class="row"><strong>Sales Person:</strong> ${salesPerson || 'Admin'}</div>
-        <div><span class="status-pill ${status === 'Paid' ? 'status-paid' : 'status-due'}">${status}</span></div>
-      </div>
-    </div>
-
-    <div class="info-grid">
-      <div class="info-box">
-        <h4>Bill To</h4>
-        <p><strong>${customer || '—'}</strong></p>
-        <p><span class="label">Phone:</span> ${phone || '—'}</p>
-        <p><span class="label">Address:</span> ${address || '—'}</p>
-        ${gstNumber ? `<p><span class="label">GSTIN:</span> ${gstNumber}</p>` : ''}
-      </div>
-      <div class="info-box">
-        <h4>${saleType === 'Exchange' ? 'Vehicle &amp; Old Battery' : 'Vehicle &amp; Warranty'}</h4>
-        <p><span class="label">Vehicle:</span> ${vehicleName || '—'} ${vehicleNumber ? `(${vehicleNumber})` : ''}</p>
-        ${saleType === 'Regular' ? `<p><span class="label">Warranty Period:</span> ${warrantyPeriod || '—'}</p>` : ''}
-        ${saleType === 'Regular' ? `<p><span class="label">Total Warranty:</span> ${totalWarranty ? `${totalWarranty} Months` : '—'}</p>` : ''}
-        ${saleType === 'Regular' && warrantyType ? `<p><span class="label">Warranty Type:</span> ${warrantyType}</p>` : ''}
-        ${saleType === 'Exchange' ? `<p><span class="label">Old Battery Weight:</span> ${oldBatteryWeight ? `${oldBatteryWeight} Kg` : '—'}</p>` : ''}
-        <p><span class="label">Payment Method:</span> ${paymentMethod || '—'}</p>
-      </div>
-    </div>
-
-    <table class="items">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Description</th>
-          <th>Serial No.</th>
-          <th>Battery Type</th>
-          <th class="num">Qty</th>
-          <th class="num">Unit Price</th>
-          <th class="num">Discount</th>
-          <th class="num">Taxable Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>1</td>
-          <td><strong>${brand || ''} ${model || ''}</strong></td>
-          <td>${serialNumber || '—'}</td>
-          <td>${batteryType || '—'}</td>
-          <td class="num">${qty}</td>
-          <td class="num">&#8377; ${formatCurrency(unitPrice)}</td>
-          <td class="num">&#8377; ${formatCurrency(discount)}</td>
-          <td class="num">&#8377; ${formatCurrency(taxableAmount)}</td>
-        </tr>
-        ${exchangeRow}
-      </tbody>
-    </table>
-
-    <div class="totals-wrap">
-      <div class="totals-box">
-        <div class="line"><span>Taxable Amount</span><strong>&#8377; ${formatCurrency(taxableAmount)}</strong></div>
-        <div class="line"><span>CGST (${cgstRate}%)</span><strong>&#8377; ${formatCurrency(cgstAmount)}</strong></div>
-        <div class="line"><span>SGST (${sgstRate}%)</span><strong>&#8377; ${formatCurrency(sgstAmount)}</strong></div>
-        <div class="grand"><span>Grand Total</span><strong>&#8377; ${formatCurrency(grandTotal)}</strong></div>
-        <div class="line" style="margin-top:8px;"><span>Payment Method</span><strong>${paymentMethod || '—'}</strong></div>
-        <div class="line"><span>Total Paid Till Date</span><strong>&#8377; ${formatCurrency(paidAmount)}</strong></div>
-        <div class="line"><span>Due Payment</span><strong>&#8377; ${formatCurrency(dueAmount)}</strong></div>
-      </div>
-    </div>
-
-    ${paymentHistoryBlock}
-
-    <div class="words-box">
-      <strong>Amount in Words:</strong> ${amountInWords(grandTotal)}
-      ${notes ? `<br/><strong>Notes:</strong> ${notes}` : ''}
-    </div>
-
-    ${saleType === 'Regular' ? `<div class="warranty-note">
-      Warranty is applicable strictly as per the manufacturer's terms and conditions. Please retain this invoice
-      as proof of purchase for any warranty claim.
-    </div>` : ''}
-
-    <div class="signatures">
-      <div class="signature-line"><div class="line-mark">Customer Signature</div></div>
-      <div class="signature-line">
-        <img
-          src="${SHOP_INFO.stamp}"
-          alt="${SHOP_INFO.name} stamp"
-          class="shop-stamp"
-          onerror="this.style.display='none'"
-        />
-        <div class="line-mark">Authorized Signatory — ${SHOP_INFO.name}</div>
-      </div>
-    </div>
-
-    <div class="doc-footer">
-      This is a system generated invoice. For any query, contact ${SHOP_INFO.phone}.
-    </div>
-  </div>
 </body>
 </html>`
+}
+
+function savedSalePrintFields(sale) {
+  return {
+    invoice: sale.invoice,
+    date: sale.date,
+    salesPerson: sale.salesPerson || 'Admin',
+    customer: sale.customer,
+    phone: sale.phone,
+    address: sale.address,
+    gstNumber: sale.gstNumber,
+    vehicleName: sale.vehicleName,
+    vehicleNumber: sale.vehicleNumber,
+    saleType: sale.saleType,
+    exchange: sale.exchange,
+    brand: sale.brand,
+    batteryType: sale.batteryType,
+    model: sale.model || sale.product,
+    serialNumber: sale.serialNumber,
+    hsn: sale.hsn || '',
+    oldBatteryWeight: sale.oldBatteryWeight || sale.exchange?.weight || 0,
+    qty: sale.qty,
+    unitPrice: sale.unitPrice,
+    discount: sale.discount,
+    discountPercent: sale.discountPercent,
+    taxableAmount: sale.batteryPrice ?? (Number(sale.amount || 0) / (1 + getGstSettings().totalRate / 100)),
+    cgstRate: sale.cgstRate ?? getGstSettings().cgstRate,
+    sgstRate: sale.sgstRate ?? getGstSettings().sgstRate,
+    cgstAmount: sale.cgstAmount ?? 0,
+    sgstAmount: sale.sgstAmount ?? 0,
+    grandTotal: sale.amount,
+    paidAmount: sale.paidAmount ?? (sale.status === 'Paid' ? sale.amount : 0),
+    dueAmount: sale.dueAmount ?? (sale.status === 'Due' ? sale.amount : 0),
+    status: sale.status,
+    warrantyPeriod: sale.warrantyPeriod,
+    totalWarranty: sale.totalWarranty,
+    warrantyType: sale.warrantyType,
+    paymentMethod: sale.paymentMethod,
+    notes: sale.notes,
+    paymentHistory: sale.paymentHistory || [],
+    items: sale.items || [],
+  }
 }
 
 export default function Sales() {
@@ -613,15 +942,30 @@ export default function Sales() {
   const [activeTab, setActiveTab] = useState('regular') // 'regular' | 'exchange'
   const [search, setSearch] = useState('')
   const [form, setForm] = useState(createEmptyForm(1))
+  const [gstRateOptions, setGstRateOptions] = useState(() => getGstSettings().rates)
+  const [invoiceItems, setInvoiceItems] = useState([])
+  const [stockModels] = useState(() => loadStoredList(PRODUCT_MODELS_STORAGE_KEY))
+  const [stockProducts, setStockProducts] = useState(() => loadStoredList(PRODUCT_STOCK_STORAGE_KEY))
+  const [availableBrands, setAvailableBrands] = useState(loadSalesBrands)
+  const [soldSerialNumbers, setSoldSerialNumbers] = useState(loadSoldSerialNumbers)
   const [selectedSale, setSelectedSale] = useState(null)
+  const [editingSaleDetails, setEditingSaleDetails] = useState(null)
   const [customerMode, setCustomerMode] = useState('new')
+  const [printLanguage, setPrintLanguage] = useState('en')
+  const [pendingWhatsAppShare, setPendingWhatsAppShare] = useState(null)
+  const [showCloudLogin, setShowCloudLogin] = useState(false)
+  const [cloudLogin, setCloudLogin] = useState({ email: 'bodakekiran63@gmail.com', password: '' })
+  const [cloudBusy, setCloudBusy] = useState(false)
+  const [cloudError, setCloudError] = useState('')
 
   const [paymentSale, setPaymentSale] = useState(null)
   const [paymentForm, setPaymentForm] = useState(emptyPaymentForm)
 
-  // One barcode scan fills both Model / Capacity and Serial Number.
+  // One barcode scan fills both Model and Serial Number.
   const [scannerField, setScannerField] = useState(null)
   const [scannerError, setScannerError] = useState('')
+  const [cameraDevices, setCameraDevices] = useState([])
+  const [selectedCameraId, setSelectedCameraId] = useState('')
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const scanRafRef = useRef(null)
@@ -629,6 +973,26 @@ export default function Sales() {
   useEffect(() => {
     localStorage.setItem(SALES_STORAGE_KEY, JSON.stringify(sales))
   }, [sales])
+
+  useEffect(() => {
+    const refreshGstRates = () => setGstRateOptions(getGstSettings().rates)
+    window.addEventListener('kalyankar-gst-settings-changed', refreshGstRates)
+    window.addEventListener('storage', refreshGstRates)
+    return () => {
+      window.removeEventListener('kalyankar-gst-settings-changed', refreshGstRates)
+      window.removeEventListener('storage', refreshGstRates)
+    }
+  }, [])
+
+  useEffect(() => {
+    const refreshBrands = () => setAvailableBrands(loadSalesBrands())
+    window.addEventListener('focus', refreshBrands)
+    window.addEventListener('storage', refreshBrands)
+    return () => {
+      window.removeEventListener('focus', refreshBrands)
+      window.removeEventListener('storage', refreshBrands)
+    }
+  }, [])
 
   useEffect(() => {
     return () => {
@@ -639,7 +1003,7 @@ export default function Sales() {
     }
   }, [])
 
-  async function startScanner(field) {
+  async function startScanner(field, deviceId = '') {
     setScannerError('')
 
     if (!('BarcodeDetector' in window)) {
@@ -648,11 +1012,17 @@ export default function Sales() {
     }
 
     try {
+      if (scanRafRef.current) cancelAnimationFrame(scanRafRef.current)
+      if (streamRef.current) streamRef.current.getTracks().forEach((track) => track.stop())
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
+        video: deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } },
       })
       streamRef.current = stream
       setScannerField(field)
+      const activeCameraId = stream.getVideoTracks()[0]?.getSettings().deviceId || deviceId
+      setSelectedCameraId(activeCameraId || '')
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      setCameraDevices(devices.filter((device) => device.kind === 'videoinput'))
 
       setTimeout(() => {
         if (videoRef.current) {
@@ -664,6 +1034,12 @@ export default function Sales() {
     } catch (error) {
       alert('Unable to access the camera. Please check camera permissions or enter the value manually.')
     }
+  }
+
+  function changeScannerCamera(event) {
+    const deviceId = event.target.value
+    setSelectedCameraId(deviceId)
+    startScanner(scannerField, deviceId)
   }
 
   function runScanLoop(field) {
@@ -678,11 +1054,17 @@ export default function Sales() {
         const results = await detector.detect(videoRef.current)
         if (results && results.length > 0) {
           const value = results[0].rawValue
-          const battery = parseBatteryBarcode(value)
+          const battery = resolveBatteryScan(value, stockProducts)
+          const needsSerial = form.saleType !== 'Exchange'
+          if (!battery.model || (needsSerial && !battery.serialNumber)) {
+            setScannerError('This QR/barcode does not contain both values and could not be matched with available stock. Add this serial number to Product Stock first, or enter the values manually.')
+            scanRafRef.current = requestAnimationFrame(scan)
+            return
+          }
           setForm((previous) => ({
             ...previous,
-            model: battery.model,
-            serialNumber: battery.serialNumber,
+            model: battery.model.toUpperCase(),
+            serialNumber: previous.saleType === 'Exchange' ? '' : battery.serialNumber,
           }))
           stopScanner()
           return
@@ -727,6 +1109,26 @@ export default function Sales() {
 
   const regularSales = useMemo(() => sales.filter((sale) => sale.saleType !== 'Exchange'), [sales])
   const exchangeSales = useMemo(() => sales.filter((sale) => sale.saleType === 'Exchange'), [sales])
+
+  const modelSuggestions = useMemo(() => {
+    const selectedBrand = form.brand.trim().toUpperCase()
+    return [...new Set(stockModels
+      .filter((model) => !selectedBrand || String(model.brand || '').toUpperCase() === selectedBrand)
+      .map((model) => String(model.name || '').trim().toUpperCase())
+      .filter(Boolean))].sort()
+  }, [stockModels, form.brand])
+
+  const serialSuggestions = useMemo(() => {
+    const selectedBrand = form.brand.trim().toUpperCase()
+    const selectedModel = form.model.trim().toUpperCase()
+    return stockProducts
+      .filter((product) => (!selectedBrand || String(product.brand || '').toUpperCase() === selectedBrand)
+        && (!selectedModel || String(product.model || '').toUpperCase() === selectedModel)
+        && !soldSerialNumbers.has(String(product.serialNo || '').toUpperCase()))
+      .map((product) => String(product.serialNo || '').trim().toUpperCase())
+      .filter(Boolean)
+      .sort()
+  }, [stockProducts, soldSerialNumbers, form.brand, form.model])
 
   function matchesSearch(sale, q) {
     return [
@@ -788,26 +1190,22 @@ export default function Sales() {
     const sgstRate = Math.max(0, Number(form.sgstRate || 0))
     const totalGstRate = cgstRate + sgstRate
     const enteredTotal = Math.max(0, Number(form.totalAmount || 0))
-    const grandTotal = enteredTotal
-
-    const paidAmount = Math.min(
-      grandTotal,
-      Math.max(0, Number(form.paidAmount || 0))
-    )
-    const dueAmount = Math.max(0, grandTotal - paidAmount)
-
-    const taxableAmount =
+    const subtotal =
       totalGstRate > 0
-        ? grandTotal / (1 + totalGstRate / 100)
-        : grandTotal
+        ? enteredTotal / (1 + totalGstRate / 100)
+        : enteredTotal
 
+    const discountPercent = form.saleType === 'Regular'
+      ? Math.min(99.99, Math.max(0, Number(form.discount || 0)))
+      : 0
+    const qty = form.saleType === 'Regular' ? Math.max(1, Number(form.qty || 1)) : 1
+    const discount = subtotal * (discountPercent / 100)
+    const taxableAmount = subtotal - discount
     const cgstAmount = taxableAmount * (cgstRate / 100)
     const sgstAmount = taxableAmount * (sgstRate / 100)
-
-    const discount = form.saleType === 'Regular' ? Math.max(0, Number(form.discount || 0)) : 0
-    const qty = form.saleType === 'Regular' ? Math.max(1, Number(form.qty || 1)) : 1
-
-    const subtotal = taxableAmount + discount
+    const grandTotal = taxableAmount + cgstAmount + sgstAmount
+    const paidAmount = Math.min(grandTotal, Math.max(0, Number(form.paidAmount || 0)))
+    const dueAmount = Math.max(0, grandTotal - paidAmount)
     const unitPrice = subtotal / qty
 
     return {
@@ -815,6 +1213,7 @@ export default function Sales() {
       subtotal,
       unitPrice,
       discount,
+      discountPercent,
       taxableAmount,
       cgstRate,
       sgstRate,
@@ -835,6 +1234,61 @@ export default function Sales() {
     form.cgstRate,
     form.sgstRate,
   ])
+
+  function makeCurrentItem() {
+    return {
+      brand: form.brand, batteryType: form.batteryType, model: form.model.trim(),
+      serialNumber: form.serialNumber.trim().toUpperCase(), hsn: form.hsn.trim(), qty: Number(form.qty || 1),
+      unitPrice: priceSummary.unitPrice, discount: priceSummary.discount, discountPercent: priceSummary.discountPercent,
+      taxableAmount: priceSummary.taxableAmount,
+      cgstRate: priceSummary.cgstRate, sgstRate: priceSummary.sgstRate,
+      cgstAmount: priceSummary.cgstAmount, sgstAmount: priceSummary.sgstAmount, grandTotal: priceSummary.grandTotal,
+      warrantyPeriod: form.warrantyPeriod, totalWarranty: form.totalWarranty, warrantyType: form.warrantyType.trim(),
+      vehicleName: form.vehicleName.trim(), vehicleNumber: form.vehicleNumber.trim().toUpperCase(),
+    }
+  }
+
+  function validateBattery() {
+    if (!form.brand) return alert('Please select battery brand.'), false
+    if (!form.batteryType) return alert('Please select battery type.'), false
+    if (!form.model.trim()) return alert('Please enter battery model.'), false
+    if (!form.serialNumber.trim()) return alert('Please enter battery serial number.'), false
+    const serial = form.serialNumber.trim().toUpperCase()
+    if (soldSerialNumbers.has(serial)) return alert('This serial number has already been sold and cannot be used again.'), false
+    if (invoiceItems.some((item) => item.serialNumber === serial)) return alert('This serial number is already added to the current bill.'), false
+    if (!form.hsn.trim()) return alert('Please enter HSN number.'), false
+    if (form.warrantyDigits.length !== 4) return alert('Please enter four warranty digits, for example 4518 for 45F + 18P.'), false
+    if (Number(form.discount || 0) < 0 || Number(form.discount || 0) >= 100) return alert('Discount percentage must be between 0 and 99.99.'), false
+    if (priceSummary.grandTotal <= 0) return alert('Please enter a valid total amount.'), false
+    return true
+  }
+
+  const currentItemComplete = form.saleType === 'Regular' && Boolean(
+    form.brand && form.batteryType && form.model.trim() && form.serialNumber.trim() && form.hsn.trim() &&
+    form.warrantyDigits.length === 4 && priceSummary.grandTotal > 0
+  )
+  const billItems = currentItemComplete ? [...invoiceItems, makeCurrentItem()] : invoiceItems
+  const billTotals = billItems.reduce((sum, item) => ({
+    taxable: sum.taxable + Number(item.taxableAmount || 0), cgst: sum.cgst + Number(item.cgstAmount || 0),
+    sgst: sum.sgst + Number(item.sgstAmount || 0), total: sum.total + Number(item.grandTotal || 0),
+    discount: sum.discount + Number(item.discount || 0),
+  }), { taxable: 0, cgst: 0, sgst: 0, total: 0, discount: 0 })
+  const billGrandTotal = form.saleType === 'Regular' && billItems.length ? billTotals.total : priceSummary.grandTotal
+  const billPaid = Math.min(billGrandTotal, Math.max(0, Number(form.paidAmount || 0)))
+  const billDue = Math.max(0, billGrandTotal - billPaid)
+
+  function addBattery() {
+    if (form.saleType !== 'Regular' || !validateBattery()) return
+    setInvoiceItems((items) => [...items, makeCurrentItem()])
+    setForm((previous) => ({ ...previous, batteryType: '', model: '', serialNumber: '', qty: 1,
+      totalAmount: '', discount: 0, warrantyDigits: '', warrantyPeriod: '', totalWarranty: 0,
+      warrantyType: '', vehicleName: '', vehicleNumber: '' }))
+  }
+
+  function removeBattery(index) {
+    setInvoiceItems((items) => items.filter((_, itemIndex) => itemIndex !== index))
+  }
+
 
   function updateForm(field, value) {
     setForm((previous) => ({ ...previous, [field]: value }))
@@ -894,9 +1348,11 @@ export default function Sales() {
   // exchange-only fields when going back to Regular so stale data
   // doesn't silently get submitted.
   function changeSaleType(type) {
+    if (type === 'Exchange') setInvoiceItems([])
     setForm((previous) => ({
       ...previous,
       saleType: type,
+      serialNumber: type === 'Exchange' ? '' : previous.serialNumber,
       discount: type === 'Exchange' ? 0 : previous.discount,
       warrantyDigits: type === 'Exchange' ? '' : previous.warrantyDigits,
       warrantyPeriod: type === 'Exchange' ? '' : previous.warrantyPeriod,
@@ -926,9 +1382,151 @@ export default function Sales() {
     }
   }
 
+  function openEditSaleDetails(sale) {
+    setEditingSaleDetails({
+      id: sale.id,
+      invoice: sale.invoice,
+      customer: sale.customer || '',
+      phone: sale.phone || '',
+      address: sale.address || '',
+      gstNumber: sale.gstNumber || '',
+      vehicleName: sale.vehicleName || '',
+      vehicleNumber: sale.vehicleNumber || '',
+    })
+  }
+
+  function saveEditedSaleDetails(event) {
+    event.preventDefault()
+    if (!editingSaleDetails) return
+    if (!editingSaleDetails.customer.trim()) return alert('Please enter customer name.')
+    if (!isValidIndianPhone(editingSaleDetails.phone)) return alert('Please enter a valid 10-digit customer phone number.')
+    const matches = (sale) => editingSaleDetails.id != null ? sale.id === editingSaleDetails.id : sale.invoice === editingSaleDetails.invoice
+    const changes = {
+      customer: editingSaleDetails.customer.trim(),
+      phone: formatIndianPhone(editingSaleDetails.phone),
+      address: editingSaleDetails.address.trim(),
+      gstNumber: editingSaleDetails.gstNumber.trim().toUpperCase(),
+      vehicleName: editingSaleDetails.vehicleName.trim(),
+      vehicleNumber: editingSaleDetails.vehicleNumber.trim().toUpperCase(),
+    }
+    setSales((rows) => rows.map((sale) => matches(sale) ? { ...sale, ...changes } : sale))
+    setSelectedSale((sale) => sale && matches(sale) ? { ...sale, ...changes } : sale)
+    const modalElement = document.getElementById('editSaleDetailsModal')
+    if (modalElement && window.bootstrap) window.bootstrap.Modal.getOrCreateInstance(modalElement).hide()
+    setEditingSaleDetails(null)
+  }
+
   function resetForm() {
     setForm(createEmptyForm(nextInvoiceSeq))
+    setInvoiceItems([])
     setCustomerMode(customers.length > 0 ? 'existing' : 'new')
+  }
+
+  function completeSaleWorkflow(sale) {
+    const invoiceDate = String(sale.invoiceDate || new Date().toLocaleDateString('en-CA')).slice(0, 10)
+    const fileName = `${safeFilePart(sale.customer)}_${invoiceDate}.pdf`
+    const printHtml = renderInvoiceHTML(savedSalePrintFields(sale), printLanguage || 'en')
+    const shareHtml = renderInvoiceHTML(savedSalePrintFields(sale), printLanguage || 'en', { copies: 1 })
+    openPrintWindow(printHtml)
+    downloadInvoicePdf(shareHtml, fileName)
+      .then((file) => {
+        setPendingWhatsAppShare({ file, sale })
+        const createdAt = Date.now()
+        localStorage.setItem('kalyankar-system-notifications', JSON.stringify([{
+          id: `sale-invoice-${createdAt}`,
+          message: `${sale.customer} invoice PDF saved and is ready to share on WhatsApp.`,
+          messageMr: `${sale.customer} यांची बिल PDF जतन झाली. प्रिंट आणि व्हाट्सअँप उघडले.`,
+          icon: 'fa-file-circle-check', color: 'success', path: '/sales',
+        }]))
+        window.dispatchEvent(new Event('kalyankar-notifications-changed'))
+      })
+      .catch(() => alert('Sale saved, but the invoice PDF could not be downloaded. Please use Print Invoice.'))
+  }
+
+  async function sharePendingInvoice() {
+    if (!pendingWhatsAppShare) return
+    const whatsappWindow = window.open('about:blank', '_blank')
+    if (!whatsappWindow) return alert('Please allow pop-ups for this site to open WhatsApp in a new tab.')
+    setCloudError('')
+    const { data } = await supabase.auth.getSession()
+    if (!data.session) {
+      if (whatsappWindow) whatsappWindow.close()
+      setShowCloudLogin(true)
+      return
+    }
+    await uploadInvoiceAndOpenWhatsApp(whatsappWindow)
+  }
+
+  async function uploadInvoiceAndOpenWhatsApp(openedWindow = null) {
+    if (!pendingWhatsAppShare || cloudBusy) return
+    const whatsappWindow = openedWindow || window.open('about:blank', '_blank')
+    if (!whatsappWindow) return alert('Please allow pop-ups for this site to open WhatsApp in a new tab.')
+    const { file, sale } = pendingWhatsAppShare
+    setCloudBusy(true)
+    setCloudError('')
+    try {
+      const year = String(sale.invoiceDate || sale.date || new Date().getFullYear()).slice(0, 4)
+      const objectPath = `${year}/${Date.now()}-${safeFilePart(sale.customer)}-${safeFilePart(sale.invoice || 'invoice')}.pdf`
+      const { error: uploadError } = await supabase.storage
+        .from('invoices')
+        .upload(objectPath, file, { contentType: 'application/pdf', upsert: false })
+      if (uploadError) throw uploadError
+
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+      const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+      let shortCode = ''
+      let shortLinkError = null
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        shortCode = Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) => alphabet[byte % alphabet.length]).join('')
+        const { error } = await supabase.from('invoice_links').insert({
+          code: shortCode,
+          object_path: objectPath,
+          expires_at: expiresAt,
+        })
+        if (!error) {
+          shortLinkError = null
+          break
+        }
+        shortLinkError = error
+        if (error.code !== '23505') break
+      }
+      if (shortLinkError) throw shortLinkError
+      const invoiceLink = `${INVOICE_SHORT_LINK_BASE}/${shortCode}`
+
+      let digits = String(sale.phone || '').replace(/\D/g, '')
+      if (digits.length === 10) digits = `91${digits}`
+      else if (digits.startsWith('0') && digits.length === 11) digits = `91${digits.slice(1)}`
+      const message = printLanguage === 'mr'
+        ? `नमस्कार ${sale.customer || 'ग्राहक'},\n\nKalyankar Batteries कडून आपले बिल पाठवत आहोत.\nआपले PDF बिल पाहण्यासाठी खालील सुरक्षित लिंक उघडा:\n${invoiceLink}\n\nही लिंक ७ दिवसांसाठी उपलब्ध आहे.\nधन्यवाद! 🙏\nKalyankar Batteries, Gargoti`
+        : `Hello ${sale.customer || 'Customer'},\n\nYour Kalyankar Batteries invoice is ready. Open the secure PDF link below:\n${invoiceLink}\n\nThis link is available for 7 days.\nThank you!\nKalyankar Batteries, Gargoti`
+      const whatsappUrl = `https://wa.me/${digits}?text=${encodeURIComponent(message)}`
+      whatsappWindow.opener = null
+      whatsappWindow.location.replace(whatsappUrl)
+      setPendingWhatsAppShare(null)
+      setShowCloudLogin(false)
+    } catch (error) {
+      if (whatsappWindow) whatsappWindow.close()
+      setCloudError(error?.message || 'PDF upload failed. Please try again.')
+    } finally {
+      setCloudBusy(false)
+    }
+  }
+
+  async function loginAndShareInvoice(event) {
+    event.preventDefault()
+    const whatsappWindow = window.open('about:blank', '_blank')
+    if (!whatsappWindow) return setCloudError('Please allow pop-ups for this site to open WhatsApp in a new tab.')
+    setCloudBusy(true)
+    setCloudError('')
+    const { error } = await supabase.auth.signInWithPassword(cloudLogin)
+    setCloudBusy(false)
+    if (error) {
+      if (whatsappWindow) whatsappWindow.close()
+      setCloudError('Login failed. Please check your Supabase email and password.')
+      return
+    }
+    setShowCloudLogin(false)
+    await uploadInvoiceAndOpenWhatsApp(whatsappWindow)
   }
 
   function handleSubmit(event) {
@@ -936,18 +1534,24 @@ export default function Sales() {
 
     if (!form.invoice.trim()) return alert('Please enter invoice number.')
     if (!form.customer.trim()) return alert('Please enter customer name.')
-    if (!form.phone.trim()) return alert('Please enter customer phone number.')
+    if (!isValidIndianPhone(form.phone)) return alert('Please enter a valid 10-digit customer phone number.')
     if (!form.address.trim()) return alert('Please enter customer address.')
-    if (!form.brand) return alert('Please select battery brand.')
-    if (!form.batteryType) return alert('Please select battery type.')
-    if (!form.model.trim()) return alert('Please enter battery model or capacity.')
-    if (!form.serialNumber.trim()) return alert('Please enter battery serial number.')
+    const currentStarted = Boolean(form.model.trim() || form.serialNumber.trim() || form.totalAmount)
+    if (form.saleType === 'Regular') {
+      if (currentStarted && !validateBattery()) return
+      if (!currentStarted && invoiceItems.length === 0) return alert('Please enter at least one battery.')
+    } else {
+      if (!form.brand) return alert('Please select battery brand.')
+      if (!form.batteryType) return alert('Please select battery type.')
+      if (!form.model.trim()) return alert('Please enter battery model.')
+      if (!form.hsn.trim()) return alert('Please enter HSN number.')
+    }
     if (form.saleType === 'Exchange' && (!form.oldBatteryWeight || Number(form.oldBatteryWeight) <= 0)) {
       return alert('Please enter a valid old battery weight in Kg.')
     }
     if (form.paidAmount === '') return alert('Please enter the paid amount.')
     if (!form.paymentMethod) return alert('Please select a payment method.')
-    if (priceSummary.grandTotal <= 0) {
+    if (billGrandTotal <= 0) {
       return alert(form.saleType === 'Exchange'
         ? 'Please enter a valid old battery total including GST.'
         : 'Please enter a valid total amount.')
@@ -955,17 +1559,22 @@ export default function Sales() {
     if (Number(form.paidAmount || 0) < 0) {
       return alert('Paid amount cannot be negative.')
     }
-    if (Number(form.paidAmount || 0) > priceSummary.grandTotal) {
+    if (Number(form.paidAmount || 0) > billGrandTotal) {
       return alert('Paid amount cannot be greater than the final payable amount.')
-    }
-    if (form.saleType === 'Regular' && form.warrantyDigits.length !== 4) {
-      return alert('Please enter four warranty digits, for example 4518 for 45F + 18P.')
     }
     if (Number(form.cgstRate) < 0 || Number(form.sgstRate) < 0) {
       return alert('GST rate cannot be negative.')
     }
+    if (Number(form.discount || 0) < 0 || Number(form.discount || 0) >= 100) {
+      return alert('Discount percentage must be between 0 and 99.99.')
+    }
 
     const saleDate = todayLabel()
+    const saleItems = form.saleType === 'Regular' ? billItems : []
+    const firstItem = saleItems[0]
+    const saleSerials = saleItems.map((item) => String(item.serialNumber || '').trim().toUpperCase()).filter(Boolean)
+    if (new Set(saleSerials).size !== saleSerials.length) return alert('The same serial number cannot be added more than once.')
+    if (saleSerials.some((serial) => soldSerialNumbers.has(serial))) return alert('One or more serial numbers have already been sold. Please select available serial numbers.')
 
     const newSale = {
       id: Date.now(),
@@ -974,12 +1583,12 @@ export default function Sales() {
       salesPerson: form.salesPerson,
 
       customer: form.customer.trim(),
-      phone: form.phone.trim(),
+      phone: formatIndianPhone(form.phone),
       address: form.address.trim(),
       gstNumber: form.gstNumber.trim(),
 
-      vehicleName: form.vehicleName.trim(),
-      vehicleNumber: form.vehicleNumber.trim().toUpperCase(),
+      vehicleName: firstItem?.vehicleName || form.vehicleName.trim(),
+      vehicleNumber: firstItem?.vehicleNumber || form.vehicleNumber.trim().toUpperCase(),
 
       saleType: form.saleType,
       exchange:
@@ -988,46 +1597,47 @@ export default function Sales() {
               brand: form.brand,
               batteryType: form.batteryType,
               model: form.model.trim(),
-              serialNumber: form.serialNumber.trim().toUpperCase(),
+              serialNumber: '',
               weight: Number(form.oldBatteryWeight || 0),
               value: priceSummary.grandTotal,
             }
           : null,
 
-      brand: form.brand,
-      batteryType: form.batteryType,
-      model: form.model.trim(),
-      serialNumber: form.serialNumber.trim().toUpperCase(),
+      brand: firstItem?.brand || form.brand,
+      batteryType: firstItem?.batteryType || form.batteryType,
+      model: firstItem?.model || form.model.trim(),
+      serialNumber: form.saleType === 'Exchange' ? '' : (firstItem?.serialNumber || form.serialNumber.trim().toUpperCase()),
+      hsn: firstItem?.hsn || form.hsn.trim(),
       oldBatteryWeight: form.saleType === 'Exchange' ? Number(form.oldBatteryWeight || 0) : 0,
-      product: `${form.brand} ${form.model.trim()}`,
-      qty: Number(form.qty || 1),
-      unitPrice: priceSummary.unitPrice,
-      batteryPrice: priceSummary.taxableAmount,
-      discount: form.saleType === 'Regular' ? Number(form.discount || 0) : 0,
+      product: `${firstItem?.brand || form.brand} ${firstItem?.model || form.model.trim()}`,
+      qty: firstItem?.qty || Number(form.qty || 1), unitPrice: firstItem?.unitPrice || priceSummary.unitPrice,
+      batteryPrice: form.saleType === 'Regular' ? billTotals.taxable : priceSummary.taxableAmount,
+      discount: form.saleType === 'Regular' ? billTotals.discount : 0,
+      discountPercent: form.saleType === 'Regular' ? (firstItem?.discountPercent ?? priceSummary.discountPercent) : 0,
+      items: saleItems,
 
-      warrantyPeriod: form.saleType === 'Regular' ? form.warrantyPeriod : '',
-      totalWarranty: form.saleType === 'Regular' ? form.totalWarranty : 0,
-      warrantyType: form.saleType === 'Regular' ? form.warrantyType.trim() : '',
+      warrantyPeriod: form.saleType === 'Regular' ? firstItem?.warrantyPeriod : '',
+      totalWarranty: form.saleType === 'Regular' ? firstItem?.totalWarranty : 0,
+      warrantyType: form.saleType === 'Regular' ? firstItem?.warrantyType : '',
 
       cgstRate: priceSummary.cgstRate,
       sgstRate: priceSummary.sgstRate,
-      cgstAmount: priceSummary.cgstAmount,
-      sgstAmount: priceSummary.sgstAmount,
+      cgstAmount: form.saleType === 'Regular' ? billTotals.cgst : priceSummary.cgstAmount,
+      sgstAmount: form.saleType === 'Regular' ? billTotals.sgst : priceSummary.sgstAmount,
 
       paymentMethod: form.paymentMethod,
-      paidAmount: priceSummary.paidAmount,
-      dueAmount: priceSummary.dueAmount,
+      paidAmount: billPaid, dueAmount: billDue,
       notes: form.notes.trim(),
-      amount: priceSummary.grandTotal,
+      amount: billGrandTotal,
       date: saleDate,
-      status: priceSummary.dueAmount > 0 ? 'Due' : 'Paid',
+      status: billDue > 0 ? 'Due' : 'Paid',
 
       // Log of every payment made against this sale (initial + later due settlements)
       paymentHistory:
-        priceSummary.paidAmount > 0
+        billPaid > 0
           ? [
               {
-                amount: priceSummary.paidAmount,
+                amount: billPaid,
                 date: saleDate,
                 method: form.paymentMethod,
               },
@@ -1036,8 +1646,19 @@ export default function Sales() {
     }
 
     setSales((previous) => [newSale, ...previous])
+    if (saleSerials.length > 0) {
+      const soldNow = new Set(saleSerials)
+      const remainingStock = loadStoredList(PRODUCT_STOCK_STORAGE_KEY)
+        .filter((product) => !soldNow.has(String(product.serialNo || '').toUpperCase()))
+      const updatedSoldSerials = new Set([...soldSerialNumbers, ...saleSerials])
+      localStorage.setItem(PRODUCT_STOCK_STORAGE_KEY, JSON.stringify(remainingStock))
+      localStorage.setItem(SOLD_SERIALS_STORAGE_KEY, JSON.stringify([...updatedSoldSerials]))
+      setStockProducts(remainingStock)
+      setSoldSerialNumbers(updatedSoldSerials)
+    }
     setNextInvoiceSeq((previous) => previous + 1)
     setActiveTab(newSale.saleType === 'Exchange' ? 'exchange' : 'regular')
+    completeSaleWorkflow(newSale)
 
     resetForm()
     closeModal()
@@ -1129,15 +1750,22 @@ export default function Sales() {
   }
 
   function printFormInvoice() {
+    const currentStarted = Boolean(form.model.trim() || form.serialNumber.trim() || form.totalAmount)
+    if (form.saleType === 'Regular') {
+      if (currentStarted && !validateBattery()) return
+      if (!currentStarted && invoiceItems.length === 0) return alert('Please enter at least one battery.')
+    }
+    const printItems = form.saleType === 'Regular' ? billItems : []
+    const firstItem = printItems[0]
     // The form hasn't been saved yet, so there's no stored payment history.
     // If an amount has been entered as "paid" in the form, show it as a
     // single payment entry dated today, so the print preview matches what
     // will actually be saved.
     const previewPaymentHistory =
-      priceSummary.paidAmount > 0
+      billPaid > 0
         ? [
             {
-              amount: priceSummary.paidAmount,
+              amount: billPaid,
               date: form.invoiceDate
                 ? new Date(form.invoiceDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
                 : todayLabel(),
@@ -1153,11 +1781,11 @@ export default function Sales() {
         : todayLabel(),
       salesPerson: form.salesPerson,
       customer: form.customer,
-      phone: form.phone,
+      phone: formatIndianPhone(form.phone),
       address: form.address,
       gstNumber: form.gstNumber,
-      vehicleName: form.vehicleName,
-      vehicleNumber: form.vehicleNumber,
+      vehicleName: firstItem?.vehicleName || form.vehicleName,
+      vehicleNumber: firstItem?.vehicleNumber || form.vehicleNumber,
       saleType: form.saleType,
       exchange: form.saleType === 'Exchange'
         ? {
@@ -1169,31 +1797,29 @@ export default function Sales() {
             value: priceSummary.grandTotal,
           }
         : null,
-      brand: form.brand,
-      batteryType: form.batteryType,
-      model: form.model,
-      serialNumber: form.serialNumber,
+      brand: firstItem?.brand || form.brand, batteryType: firstItem?.batteryType || form.batteryType,
+      model: firstItem?.model || form.model, serialNumber: firstItem?.serialNumber || form.serialNumber,
+      hsn: firstItem?.hsn || form.hsn,
       oldBatteryWeight: Number(form.oldBatteryWeight || 0),
-      qty: Number(form.qty || 1),
-      unitPrice: priceSummary.unitPrice,
-      discount: priceSummary.discount,
-      taxableAmount: priceSummary.taxableAmount,
+      qty: firstItem?.qty || Number(form.qty || 1), unitPrice: firstItem?.unitPrice || priceSummary.unitPrice,
+      discount: firstItem?.discount ?? priceSummary.discount,
+      discountPercent: firstItem?.discountPercent ?? priceSummary.discountPercent,
+      taxableAmount: form.saleType === 'Regular' ? billTotals.taxable : priceSummary.taxableAmount,
       cgstRate: priceSummary.cgstRate,
       sgstRate: priceSummary.sgstRate,
-      cgstAmount: priceSummary.cgstAmount,
-      sgstAmount: priceSummary.sgstAmount,
-      grandTotal: priceSummary.grandTotal,
-      paidAmount: priceSummary.paidAmount,
-      dueAmount: priceSummary.dueAmount,
-      status: priceSummary.dueAmount > 0 ? 'Due' : 'Paid',
-      warrantyPeriod: form.warrantyPeriod,
-      totalWarranty: form.totalWarranty,
-      warrantyType: form.warrantyType,
+      cgstAmount: form.saleType === 'Regular' ? billTotals.cgst : priceSummary.cgstAmount,
+      sgstAmount: form.saleType === 'Regular' ? billTotals.sgst : priceSummary.sgstAmount,
+      grandTotal: billGrandTotal, paidAmount: billPaid, dueAmount: billDue,
+      status: billDue > 0 ? 'Due' : 'Paid',
+      warrantyPeriod: firstItem?.warrantyPeriod || form.warrantyPeriod,
+      totalWarranty: firstItem?.totalWarranty || form.totalWarranty,
+      warrantyType: firstItem?.warrantyType || form.warrantyType,
       paymentMethod: form.paymentMethod,
       notes: form.notes,
       paymentHistory: previewPaymentHistory,
+      items: printItems,
     }
-    openPrintWindow(renderInvoiceHTML(fields, choosePrintLanguage()))
+    openPrintWindow(renderInvoiceHTML(fields, printLanguage || 'en'))
   }
 
   function printSavedInvoice(sale) {
@@ -1214,13 +1840,15 @@ export default function Sales() {
       batteryType: sale.batteryType,
       model: sale.model || sale.product,
       serialNumber: sale.serialNumber,
+      hsn: sale.hsn || '',
       oldBatteryWeight: sale.oldBatteryWeight || sale.exchange?.weight || 0,
       qty: sale.qty,
       unitPrice: sale.unitPrice,
       discount: sale.discount,
-      taxableAmount: sale.batteryPrice ?? (Number(sale.amount || 0) / 1.18),
-      cgstRate: sale.cgstRate ?? 9,
-      sgstRate: sale.sgstRate ?? 9,
+      discountPercent: sale.discountPercent,
+      taxableAmount: sale.batteryPrice ?? (Number(sale.amount || 0) / (1 + getGstSettings().totalRate / 100)),
+      cgstRate: sale.cgstRate ?? getGstSettings().cgstRate,
+      sgstRate: sale.sgstRate ?? getGstSettings().sgstRate,
       cgstAmount: sale.cgstAmount ?? 0,
       sgstAmount: sale.sgstAmount ?? 0,
       grandTotal: sale.amount,
@@ -1235,8 +1863,24 @@ export default function Sales() {
       // Full trail of payments (original + any due settlements), each with
       // its own date, amount and method — printed as a dedicated table.
       paymentHistory: sale.paymentHistory || [],
+      items: sale.items || [],
     }
-    openPrintWindow(renderInvoiceHTML(fields, choosePrintLanguage()))
+    openPrintWindow(renderInvoiceHTML(fields, printLanguage || 'en'))
+  }
+
+  async function shareSavedInvoiceOnWhatsApp(sale) {
+    if (!sale) return
+    const phoneDigits = String(sale.phone || '').replace(/\D/g, '')
+    if (phoneDigits.length < 10) return alert('Please add a valid customer WhatsApp number before sharing this invoice.')
+    const invoiceDate = String(sale.invoiceDate || sale.date || new Date().toLocaleDateString('en-CA')).slice(0, 10)
+    const fileName = `${safeFilePart(sale.customer)}_${invoiceDate}.pdf`
+    const shareHtml = renderInvoiceHTML(savedSalePrintFields(sale), printLanguage || 'en', { copies: 1 })
+    try {
+      const file = await downloadInvoicePdf(shareHtml, fileName)
+      setPendingWhatsAppShare({ file, sale })
+    } catch {
+      alert('The invoice PDF could not be prepared. Please try again.')
+    }
   }
 
   function renderSalesTable(list, isExchange) {
@@ -1270,7 +1914,8 @@ export default function Sales() {
               <th>Name</th>
               <th>Address / Phone</th>
               <th>{isExchange ? 'Old Battery' : 'Brand & Capacity'}</th>
-              <th>Serial No.</th>
+              {!isExchange && <th>Serial No.</th>}
+              <th>HSN</th>
               {isExchange && <th>Weight (Kg)</th>}
               <th>Type of Vehicle</th>
               {!isExchange && <th>Unit</th>}
@@ -1318,7 +1963,8 @@ export default function Sales() {
                   </div>
                 </td>
 
-                <td>{sale.serialNumber || '—'}</td>
+                {!isExchange && <td>{sale.serialNumber || '—'}</td>}
+                <td>{sale.hsn || '—'}</td>
                 {isExchange && <td>{sale.oldBatteryWeight ? `${sale.oldBatteryWeight} Kg` : '—'}</td>}
 
                 <td>
@@ -1368,6 +2014,26 @@ export default function Sales() {
 
                     <button
                       type="button"
+                      className="btn btn-sm btn-outline-secondary"
+                      data-bs-toggle="modal"
+                      data-bs-target="#editSaleDetailsModal"
+                      onClick={() => openEditSaleDetails(sale)}
+                      title="Edit customer details"
+                    >
+                      <i className="fa-solid fa-pen"></i>
+                    </button>
+
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-success"
+                      onClick={() => shareSavedInvoiceOnWhatsApp(sale)}
+                      title={`Share invoice with ${sale.customer || 'customer'} on WhatsApp`}
+                    >
+                      <i className="fa-brands fa-whatsapp"></i>
+                    </button>
+
+                    <button
+                      type="button"
                       className="btn btn-sm btn-outline-danger"
                       onClick={() => deleteSale(sale.id)}
                       title="Delete sale"
@@ -1391,6 +2057,10 @@ export default function Sales() {
       <Topbar title="Sales" subtitle="Create and manage battery sales invoices" />
 
       <style>{`
+        input[type='number'] { appearance: textfield; -moz-appearance: textfield; }
+        input[type='number']::-webkit-inner-spin-button,
+        input[type='number']::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+
         .sales-stat-card {
           min-height: 125px;
           border: 1px solid #e5eaf2;
@@ -1546,6 +2216,9 @@ export default function Sales() {
         .scanner-hint {
           padding: 10px 16px; font-size: 12px; color: #64748b; text-align: center; background: #f7f9fc;
         }
+        .scanner-camera-choice { padding: 12px 16px; background: #fff; border-top: 1px solid #e5eaf2; }
+        .scanner-camera-choice label { display: block; margin-bottom: 5px; color: #26344c; font-size: 11px; font-weight: 800; }
+        .scanner-camera-choice select { width: 100%; padding: 8px 10px; color: #17213a; background: #fff; border: 1px solid #d8dfeb; border-radius: 7px; font-size: 12px; }
 
         .customer-mode-switch {
           display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 16px;
@@ -1563,15 +2236,6 @@ export default function Sales() {
 
         .customer-helper { margin-top: 8px; color: #718096; font-size: 11px; }
 
-        .brand-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-
-        .brand-choice {
-          border: 1px solid #d7deea; background: #ffffff; color: #3b475d;
-          border-radius: 7px; padding: 7px 11px; font-size: 12px; font-weight: 600;
-        }
-
-        .brand-choice.active { border-color: #1769e8; background: #eaf2ff; color: #1769e8; }
-
         .quantity-box { display: grid; grid-template-columns: 38px 1fr 38px; }
 
         .quantity-box button {
@@ -1587,6 +2251,15 @@ export default function Sales() {
           margin-top: 14px; padding: 11px 13px; background: #edf9f1; border: 1px solid #c3eccf;
           border-radius: 8px; color: #277640; font-size: 12px;
         }
+
+        .add-battery-btn { margin-top: 14px; background: #1769e8; color: #fff; font-weight: 700; }
+        .add-battery-btn:hover { background: #1258c7; color: #fff; }
+        .added-batteries-list { margin-top: 14px; border: 1px solid #dbe4f0; border-radius: 10px; overflow: hidden; }
+        .added-batteries-heading { padding: 9px 12px; background: #f3f7fc; color: #24334d; font-size: 12px; font-weight: 700; }
+        .added-battery-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 10px 12px; border-top: 1px solid #e7edf5; }
+        .added-battery-row span { min-width: 0; }
+        .added-battery-row small { display: block; color: #6c788b; margin-top: 2px; }
+        .added-battery-row button { border: 0; background: #fff0f0; color: #c53434; width: 32px; height: 32px; border-radius: 7px; }
 
         .exchange-message {
           margin-top: 14px; padding: 11px 13px; background: #eef2ff; border: 1px solid #d7dcfb;
@@ -1649,7 +2322,6 @@ export default function Sales() {
           .invoice-grid { grid-template-columns: 1fr; }
           .invoice-right-column { grid-column: auto; grid-template-columns: 1fr; }
           .invoice-modal .modal-body { padding: 12px; }
-          .brand-buttons { display: grid; grid-template-columns: 1fr 1fr; }
           .grand-total-row strong { font-size: 20px; }
         }
       `}</style>
@@ -1734,7 +2406,7 @@ export default function Sales() {
               onClick={() => setActiveTab('exchange')}
             >
               <i className="fa-solid fa-right-left"></i>
-              Exchange Sales
+              Old Battery purchase
               <span className="count-pill">{exchangeSales.length}</span>
             </button>
           </div>
@@ -1966,12 +2638,12 @@ export default function Sales() {
                         </label>
                         <select
                           className="form-select invoice-select"
-                          required
+                          required={invoiceItems.length === 0}
                           value={form.brand}
                           onChange={(event) => updateForm('brand', event.target.value)}
                         >
                           <option value="">Select Brand</option>
-                          {brands.map((brand) => (
+                          {availableBrands.map((brand) => (
                             <option key={brand} value={brand}>{brand}</option>
                           ))}
                         </select>
@@ -1983,7 +2655,7 @@ export default function Sales() {
                         </label>
                         <select
                           className="form-select invoice-select"
-                          required
+                          required={invoiceItems.length === 0}
                           value={form.batteryType}
                           onChange={(event) => updateForm('batteryType', event.target.value)}
                         >
@@ -1995,48 +2667,60 @@ export default function Sales() {
                       </div>
                     </div>
 
-                    <div className="brand-buttons">
-                      {brands.map((brand) => (
-                        <button
-                          type="button"
-                          key={brand}
-                          className={`brand-choice ${form.brand === brand ? 'active' : ''}`}
-                          onClick={() => updateForm('brand', brand)}
-                        >
-                          <i className="fa-solid fa-car-battery me-1"></i>
-                          {brand}
-                        </button>
-                      ))}
-                    </div>
-
                     <hr className="my-3" />
 
                     <div className="row g-3">
                       <div className="col-md-6">
                         <label className="invoice-label">
-                          {form.saleType === 'Exchange' ? 'Old Battery Model' : 'Model / Capacity'} <span className="required-star">*</span>
+                          {form.saleType === 'Exchange' ? 'Old Battery Model' : 'Model'} <span className="required-star">*</span>
                         </label>
                         <input
                           type="text"
                           className="form-control invoice-input"
                           placeholder="Example: EXIDE MLDIN60"
-                          required
+                          list={form.saleType === 'Regular' ? 'sales-model-options' : undefined}
+                          required={invoiceItems.length === 0}
                           value={form.model}
-                          onChange={(event) => updateForm('model', event.target.value)}
+                          onChange={(event) => setForm((previous) => ({ ...previous, model: event.target.value.toUpperCase(), serialNumber: '' }))}
                         />
+                        {form.saleType === 'Regular' && (
+                          <datalist id="sales-model-options">
+                            {modelSuggestions.map((model) => <option key={model} value={model} />)}
+                          </datalist>
+                        )}
                       </div>
 
-                      <div className="col-md-6">
+                      {form.saleType !== 'Exchange' && (
+                        <div className="col-md-6">
+                          <label className="invoice-label">
+                            Serial Number <span className="required-star">*</span>
+                          </label>
+                          <input
+                            type="text"
+                            className="form-control invoice-input"
+                            placeholder="e.g. M6L5G234778"
+                            list="sales-serial-options"
+                            required={invoiceItems.length === 0}
+                            value={form.serialNumber}
+                            onChange={(event) => updateForm('serialNumber', event.target.value.toUpperCase())}
+                          />
+                          <datalist id="sales-serial-options">
+                            {serialSuggestions.map((serial) => <option key={serial} value={serial} />)}
+                          </datalist>
+                        </div>
+                      )}
+
+                      <div className="col-md-4">
                         <label className="invoice-label">
-                          {form.saleType === 'Exchange' ? 'Old Battery Serial Number' : 'Serial Number'} <span className="required-star">*</span>
+                          HSN Number <span className="required-star">*</span>
                         </label>
                         <input
                           type="text"
                           className="form-control invoice-input"
-                          placeholder="e.g. M6L5G234778"
-                          required
-                          value={form.serialNumber}
-                          onChange={(event) => updateForm('serialNumber', event.target.value.toUpperCase())}
+                          placeholder="Enter HSN code, e.g. 8507"
+                          required={invoiceItems.length === 0}
+                          value={form.hsn}
+                          onChange={(event) => updateForm('hsn', event.target.value.replace(/\D/g, ''))}
                         />
                       </div>
 
@@ -2045,10 +2729,10 @@ export default function Sales() {
                           type="button"
                           className="btn scan-btn w-100"
                           onClick={() => startScanner('battery')}
-                          title="Scan once to fill model and serial number"
+                          title={form.saleType === 'Exchange' ? 'Scan QR or barcode to fill model' : 'Scan QR or barcode to fill model and serial number'}
                         >
                           <i className="fa-solid fa-barcode me-2"></i>
-                          Scan Model / Capacity and Serial Number
+                          {form.saleType === 'Exchange' ? 'Scan QR / Barcode for Model' : 'Scan QR / Barcode — Fill Model & Serial Number'}
                         </button>
                       </div>
 
@@ -2063,7 +2747,7 @@ export default function Sales() {
                             min="0.1"
                             step="0.1"
                             placeholder="Example: 12.5"
-                            required
+                            required={invoiceItems.length === 0}
                             value={form.oldBatteryWeight}
                             onChange={(event) => updateForm('oldBatteryWeight', event.target.value)}
                           />
@@ -2098,7 +2782,7 @@ export default function Sales() {
                           min="0"
                           step="0.01"
                           placeholder="Example: 6500"
-                          required
+                          required={invoiceItems.length === 0}
                           value={form.totalAmount}
                           onChange={(event) => updateForm('totalAmount', event.target.value)}
                         />
@@ -2117,14 +2801,19 @@ export default function Sales() {
                       </div>
 
                       {form.saleType === 'Regular' && <div className="col-md-4">
-                        <label className="invoice-label">Discount (₹)</label>
-                        <input
-                          type="number"
-                          className="form-control invoice-input"
-                          min="0"
-                          value={form.discount}
-                          onChange={(event) => updateForm('discount', event.target.value)}
-                        />
+                        <label className="invoice-label">Discount (%)</label>
+                        <div className="gst-rate-input-group">
+                          <input
+                            type="number"
+                            className="form-control invoice-input"
+                            min="0"
+                            max="99.99"
+                            step="0.01"
+                            value={form.discount}
+                            onChange={(event) => updateForm('discount', event.target.value)}
+                          />
+                          <span>%</span>
+                        </div>
                       </div>}
 
                       <div className="col-md-4">
@@ -2136,7 +2825,7 @@ export default function Sales() {
                             min="0"
                             step="0.1"
                             value={form.cgstRate}
-                            onChange={(event) => updateForm('cgstRate', event.target.value)}
+                            readOnly
                           />
                           <span>%</span>
                         </div>
@@ -2151,7 +2840,7 @@ export default function Sales() {
                             min="0"
                             step="0.1"
                             value={form.sgstRate}
-                            onChange={(event) => updateForm('sgstRate', event.target.value)}
+                            readOnly
                           />
                           <span>%</span>
                         </div>
@@ -2159,12 +2848,16 @@ export default function Sales() {
 
                       <div className="col-md-12">
                         <label className="invoice-label">Total GST</label>
-                        <input
-                          type="text"
-                          className="form-control invoice-input"
-                          value={`${Number(form.cgstRate || 0) + Number(form.sgstRate || 0)}%  (CGST + SGST)`}
-                          readOnly
-                        />
+                        <select
+                          className="form-select invoice-input"
+                          value={Number(form.cgstRate || 0) + Number(form.sgstRate || 0)}
+                          onChange={(event) => {
+                            const totalRate = Number(event.target.value)
+                            setForm((previous) => ({ ...previous, cgstRate: totalRate / 2, sgstRate: totalRate / 2 }))
+                          }}
+                        >
+                          {gstRateOptions.map((rate) => <option key={rate} value={rate}>{rate}% (CGST {rate / 2}% + SGST {rate / 2}%)</option>)}
+                        </select>
                       </div>
                     </div>
 
@@ -2182,7 +2875,7 @@ export default function Sales() {
                           inputMode="numeric"
                           className="form-control invoice-input"
                           placeholder="45F + 18P"
-                          required
+                          required={invoiceItems.length === 0}
                           value={form.warrantyPeriod}
                           onChange={(event) => updateWarranty(event.target.value)}
                           onKeyDown={handleWarrantyKeyDown}
@@ -2219,6 +2912,30 @@ export default function Sales() {
                           <i className="fa-solid fa-circle-info me-2"></i>
                           Warranty will be applicable according to the manufacturer&apos;s terms and conditions.
                         </div>
+
+                        {invoiceItems.length > 0 && (
+                          <div className="added-batteries-list">
+                            <div className="added-batteries-heading">Added Batteries ({invoiceItems.length})</div>
+                            {invoiceItems.map((item, index) => (
+                              <div className="added-battery-row" key={`${item.serialNumber}-${index}`}>
+                                <span>
+                                  <strong>{index + 1}. {item.brand} {item.model}</strong>
+                                  <small>{item.serialNumber} · {item.vehicleName || 'No vehicle'} {item.vehicleNumber}</small>
+                                </span>
+                                <strong>₹ {formatCurrency(item.grandTotal)}</strong>
+                                <button type="button" onClick={() => removeBattery(index)} aria-label={`Remove ${item.brand} ${item.model}`}>
+                                  <i className="fa-solid fa-trash"></i>
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <button type="button" className="btn add-battery-btn w-100" onClick={addBattery}>
+                          <i className="fa-solid fa-plus me-2"></i>
+                          Add Battery
+                        </button>
+
                       </>
                     )}
                   </div>
@@ -2353,7 +3070,7 @@ export default function Sales() {
                           <input
                             type="text"
                             className="form-control invoice-input"
-                            value={formatCurrency(priceSummary.dueAmount)}
+                            value={formatCurrency(billDue)}
                             readOnly
                           />
                         </div>
@@ -2363,7 +3080,7 @@ export default function Sales() {
                           <input
                             type="text"
                             className="form-control invoice-input"
-                            value={priceSummary.dueAmount > 0 ? 'Due' : 'Paid'}
+                            value={billDue > 0 ? 'Due' : 'Paid'}
                             readOnly
                           />
                         </div>
@@ -2391,50 +3108,50 @@ export default function Sales() {
 
                     <div className="price-summary-row">
                       <span>Subtotal</span>
-                      <strong>₹ {formatCurrency(priceSummary.subtotal)}</strong>
+                      <strong>₹ {formatCurrency(billItems.length ? billTotals.taxable + billTotals.discount : priceSummary.subtotal)}</strong>
                     </div>
 
                     {form.saleType === 'Regular' && <div className="price-summary-row">
-                      <span>Discount</span>
-                      <strong>− ₹ {formatCurrency(priceSummary.discount)}</strong>
+                      <span>Discount ({billItems.length > 1 ? 'item-wise' : `${billItems[0]?.discountPercent ?? priceSummary.discountPercent}%`})</span>
+                      <strong>− ₹ {formatCurrency(billItems.length ? billTotals.discount : priceSummary.discount)}</strong>
                     </div>}
 
                     <div className="price-summary-row">
                       <span>{form.saleType === 'Exchange' ? 'Old Battery Total Including GST' : 'Battery Total'}</span>
-                      <strong>₹ {formatCurrency(priceSummary.enteredTotal)}</strong>
+                      <strong>₹ {formatCurrency(billGrandTotal)}</strong>
                     </div>
 
                     <div className="price-summary-row">
                       <span>Taxable Amount</span>
-                      <strong>₹ {formatCurrency(priceSummary.taxableAmount)}</strong>
+                      <strong>₹ {formatCurrency(billItems.length ? billTotals.taxable : priceSummary.taxableAmount)}</strong>
                     </div>
 
                     <div className="price-summary-row">
                       <span>CGST ({priceSummary.cgstRate}%)</span>
-                      <strong>+ ₹ {formatCurrency(priceSummary.cgstAmount)}</strong>
+                      <strong>+ ₹ {formatCurrency(billItems.length ? billTotals.cgst : priceSummary.cgstAmount)}</strong>
                     </div>
 
                     <div className="price-summary-row">
                       <span>SGST ({priceSummary.sgstRate}%)</span>
-                      <strong>+ ₹ {formatCurrency(priceSummary.sgstAmount)}</strong>
+                      <strong>+ ₹ {formatCurrency(billItems.length ? billTotals.sgst : priceSummary.sgstAmount)}</strong>
                     </div>
 
                     <div className="summary-divider"></div>
 
                     <div className="grand-total-row">
                       <span>Grand Total</span>
-                      <strong>₹ {formatCurrency(priceSummary.grandTotal)}</strong>
+                      <strong>₹ {formatCurrency(billGrandTotal)}</strong>
                     </div>
 
                     <div className="price-summary-row mt-3">
                       <span>Paid Amount</span>
-                      <strong className="text-success">₹ {formatCurrency(priceSummary.paidAmount)}</strong>
+                      <strong className="text-success">₹ {formatCurrency(billPaid)}</strong>
                     </div>
 
                     <div className="price-summary-row">
                       <span>Due Amount</span>
-                      <strong className={priceSummary.dueAmount > 0 ? 'text-danger' : 'text-success'}>
-                        ₹ {formatCurrency(priceSummary.dueAmount)}
+                      <strong className={billDue > 0 ? 'text-danger' : 'text-success'}>
+                        ₹ {formatCurrency(billDue)}
                       </strong>
                     </div>
 
@@ -2449,13 +3166,22 @@ export default function Sales() {
 
               <div className="modal-footer">
                 <button type="button" className="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <select
+                  className="form-select invoice-select w-auto"
+                  aria-label="Language"
+                  value={printLanguage}
+                  onChange={(event) => setPrintLanguage(event.target.value)}
+                >
+                  <option value="en">English</option>
+                  <option value="mr">Marathi</option>
+                </select>
                 <button type="button" className="btn btn-outline-primary" onClick={printFormInvoice}>
                   <i className="fa-solid fa-print me-2"></i>
                   Print Preview
                 </button>
                 <button type="submit" className="btn btn-primary px-4">
                   <i className="fa-solid fa-check me-2"></i>
-                  Save Sale
+                  Save, Print &amp; WhatsApp
                 </button>
               </div>
             </form>
@@ -2520,7 +3246,10 @@ export default function Sales() {
                       <div className="view-detail-row"><span>{selectedSale.saleType === 'Exchange' ? 'Old Battery Brand' : 'Brand'}</span><strong>{selectedSale.brand}</strong></div>
                       <div className="view-detail-row"><span>{selectedSale.saleType === 'Exchange' ? 'Old Battery Type' : 'Battery Type'}</span><strong>{selectedSale.batteryType}</strong></div>
                       <div className="view-detail-row"><span>{selectedSale.saleType === 'Exchange' ? 'Old Battery Model' : 'Model'}</span><strong>{selectedSale.model || selectedSale.product}</strong></div>
-                      <div className="view-detail-row"><span>{selectedSale.saleType === 'Exchange' ? 'Old Battery Serial Number' : 'Serial Number'}</span><strong>{selectedSale.serialNumber || '—'}</strong></div>
+                      {selectedSale.saleType !== 'Exchange' && (
+                        <div className="view-detail-row"><span>Serial Number</span><strong>{selectedSale.serialNumber || '—'}</strong></div>
+                      )}
+                      <div className="view-detail-row"><span>HSN Number</span><strong>{selectedSale.hsn || '—'}</strong></div>
                       {selectedSale.saleType === 'Exchange' && (
                         <div className="view-detail-row"><span>Old Battery Weight</span><strong>{selectedSale.oldBatteryWeight ? `${selectedSale.oldBatteryWeight} Kg` : '—'}</strong></div>
                       )}
@@ -2540,10 +3269,10 @@ export default function Sales() {
 
                       {selectedSale.saleType === 'Regular' && <div className="view-detail-row"><span>Quantity</span><strong>{selectedSale.qty}</strong></div>}
                       {selectedSale.saleType === 'Regular' && <div className="view-detail-row"><span>Unit Price</span><strong>₹ {formatCurrency(selectedSale.unitPrice)}</strong></div>}
-                      {selectedSale.saleType === 'Regular' && <div className="view-detail-row"><span>Discount</span><strong>₹ {formatCurrency(selectedSale.discount)}</strong></div>}
-                      <div className="view-detail-row"><span>{selectedSale.saleType === 'Exchange' ? 'Old Battery Price Before GST' : 'Battery Price Before GST'}</span><strong>₹ {formatCurrency(selectedSale.batteryPrice ?? (Number(selectedSale.amount || 0) / 1.18))}</strong></div>
-                      <div className="view-detail-row"><span>CGST</span><strong>{selectedSale.cgstRate ?? 9}% — ₹ {formatCurrency(selectedSale.cgstAmount ?? 0)}</strong></div>
-                      <div className="view-detail-row"><span>SGST</span><strong>{selectedSale.sgstRate ?? 9}% — ₹ {formatCurrency(selectedSale.sgstAmount ?? 0)}</strong></div>
+                      {selectedSale.saleType === 'Regular' && <div className="view-detail-row"><span>Discount</span><strong>{selectedSale.discountPercent != null ? `${formatCurrency(selectedSale.discountPercent)}% (₹ ${formatCurrency(selectedSale.discount)})` : `₹ ${formatCurrency(selectedSale.discount)}`}</strong></div>}
+                      <div className="view-detail-row"><span>{selectedSale.saleType === 'Exchange' ? 'Old Battery Price Before GST' : 'Battery Price Before GST'}</span><strong>₹ {formatCurrency(selectedSale.batteryPrice ?? (Number(selectedSale.amount || 0) / (1 + getGstSettings().totalRate / 100)))}</strong></div>
+                      <div className="view-detail-row"><span>CGST</span><strong>{selectedSale.cgstRate ?? getGstSettings().cgstRate}% — ₹ {formatCurrency(selectedSale.cgstAmount ?? 0)}</strong></div>
+                      <div className="view-detail-row"><span>SGST</span><strong>{selectedSale.sgstRate ?? getGstSettings().sgstRate}% — ₹ {formatCurrency(selectedSale.sgstAmount ?? 0)}</strong></div>
                       <div className="view-detail-row"><span>Paid Amount</span><strong className="text-success">₹ {formatCurrency(selectedSale.paidAmount ?? (selectedSale.status === 'Paid' ? selectedSale.amount : 0))}</strong></div>
                       <div className="view-detail-row"><span>Due Amount</span><strong className="text-danger">₹ {formatCurrency(selectedSale.dueAmount ?? (selectedSale.status === 'Due' ? selectedSale.amount : 0))}</strong></div>
                       <div className="view-detail-row border-0">
@@ -2603,9 +3332,22 @@ export default function Sales() {
                   Record Payment
                 </button>
               )}
+              <select
+                className="form-select invoice-select w-auto"
+                aria-label="Language"
+                value={printLanguage}
+                onChange={(event) => setPrintLanguage(event.target.value)}
+              >
+                <option value="en">English</option>
+                <option value="mr">Marathi</option>
+              </select>
               <button type="button" className="btn btn-primary" onClick={() => printSavedInvoice(selectedSale)}>
                 <i className="fa-solid fa-print me-2"></i>
                 Print Invoice
+              </button>
+              <button type="button" className="btn btn-success" onClick={() => shareSavedInvoiceOnWhatsApp(selectedSale)}>
+                <i className="fa-brands fa-whatsapp me-2"></i>
+                Share on WhatsApp
               </button>
             </div>
           </div>
@@ -2613,6 +3355,33 @@ export default function Sales() {
       </div>
 
       {/* Record Payment Modal */}
+      <div className="modal fade" id="editSaleDetailsModal" tabIndex="-1" aria-hidden="true">
+        <div className="modal-dialog modal-dialog-centered modal-lg">
+          <div className="modal-content border-0 rounded-4">
+            <form onSubmit={saveEditedSaleDetails}>
+              <div className="modal-header">
+                <h5 className="modal-title"><i className="fa-solid fa-user-pen text-primary me-2"></i>Edit Customer Details</h5>
+                <button type="button" className="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+              </div>
+              <div className="modal-body">
+                {editingSaleDetails && <div className="row g-3">
+                  <div className="col-md-6"><label className="form-label">Customer Name *</label><input className="form-control" required value={editingSaleDetails.customer} onChange={(e) => setEditingSaleDetails({ ...editingSaleDetails, customer: e.target.value })} /></div>
+                  <div className="col-md-6"><label className="form-label">Phone / WhatsApp Number *</label><input className="form-control" required inputMode="numeric" value={editingSaleDetails.phone} onChange={(e) => setEditingSaleDetails({ ...editingSaleDetails, phone: e.target.value.replace(/[^\d+\s-]/g, '') })} /></div>
+                  <div className="col-12"><label className="form-label">Address</label><textarea className="form-control" rows="2" value={editingSaleDetails.address} onChange={(e) => setEditingSaleDetails({ ...editingSaleDetails, address: e.target.value })}></textarea></div>
+                  <div className="col-md-6"><label className="form-label">Customer GST Number</label><input className="form-control text-uppercase" maxLength="15" value={editingSaleDetails.gstNumber} onChange={(e) => setEditingSaleDetails({ ...editingSaleDetails, gstNumber: e.target.value })} /></div>
+                  <div className="col-md-6"><label className="form-label">Vehicle Name</label><input className="form-control" value={editingSaleDetails.vehicleName} onChange={(e) => setEditingSaleDetails({ ...editingSaleDetails, vehicleName: e.target.value })} /></div>
+                  <div className="col-md-6"><label className="form-label">Vehicle Number</label><input className="form-control text-uppercase" value={editingSaleDetails.vehicleNumber} onChange={(e) => setEditingSaleDetails({ ...editingSaleDetails, vehicleNumber: e.target.value })} /></div>
+                </div>}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" className="btn btn-primary"><i className="fa-solid fa-floppy-disk me-2"></i>Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
       <div className="modal fade" id="paymentModal" tabIndex="-1" aria-hidden="true">
         <div className="modal-dialog modal-dialog-centered">
           <div className="modal-content border-0 rounded-4">
@@ -2693,18 +3462,94 @@ export default function Sales() {
         </div>
       </div>
 
-      {/* One barcode scanner fills Model/Capacity and Serial Number together. */}
+      {pendingWhatsAppShare && (
+        <div className="modal d-block" role="dialog" aria-modal="true" style={{ background: 'rgba(0, 0, 0, 0.55)' }}>
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  {printLanguage === 'mr' ? 'इनव्हॉइस PDF तयार आहे' : 'Invoice PDF Ready'}
+                </h5>
+                <button type="button" className="btn-close" onClick={() => setPendingWhatsAppShare(null)} aria-label="Close"></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-2">
+                  <strong>{pendingWhatsAppShare.sale.customer}</strong><br />
+                  {pendingWhatsAppShare.file.name}
+                </p>
+                <p className="d-none">
+                  {printLanguage === 'mr'
+                    ? 'PDF शेअर करा वर क्लिक करा, व्हाट्सअँप निवडा आणि नंतर ग्राहक निवडा.'
+                    : 'Click Share PDF, choose WhatsApp, and then select the customer.'}
+                </p>
+                <p className="mb-0 text-muted">
+                  {printLanguage === 'mr'
+                    ? 'सुरक्षित PDF लिंक पाठवा वर क्लिक केल्यावर ग्राहकाचा WhatsApp नंबर आणि संदेश आपोआप उघडेल.'
+                    : 'Click Send Secure PDF Link. The saved customer number and message will open automatically in WhatsApp.'}
+                </p>
+                {showCloudLogin && (
+                  <form id="supabaseInvoiceLogin" className="mt-3" onSubmit={loginAndShareInvoice}>
+                    <div className="alert alert-info py-2">
+                      Sign in once with the Supabase Admin account to upload private invoices securely.
+                    </div>
+                    <label className="form-label fw-bold">Supabase Admin Email</label>
+                    <input
+                      type="email"
+                      className="form-control mb-2"
+                      required
+                      value={cloudLogin.email}
+                      onChange={(event) => setCloudLogin((previous) => ({ ...previous, email: event.target.value }))}
+                    />
+                    <label className="form-label fw-bold">Supabase Admin Password</label>
+                    <input
+                      type="password"
+                      className="form-control"
+                      required
+                      autoFocus
+                      value={cloudLogin.password}
+                      onChange={(event) => setCloudLogin((previous) => ({ ...previous, password: event.target.value }))}
+                    />
+                    {cloudError && <div className="alert alert-danger py-2 mt-2 mb-0">{cloudError}</div>}
+                    <button type="submit" className="btn btn-primary w-100 mt-3" disabled={cloudBusy}>
+                      {cloudBusy ? 'Signing in...' : 'Login & Send PDF Link'}
+                    </button>
+                  </form>
+                )}
+                {!showCloudLogin && cloudError && <div className="alert alert-danger py-2 mt-3 mb-0">{cloudError}</div>}
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline-secondary" onClick={() => setPendingWhatsAppShare(null)}>
+                  {printLanguage === 'mr' ? 'नंतर' : 'Later'}
+                </button>
+                <button type="button" className="btn btn-success" onClick={sharePendingInvoice} disabled={cloudBusy || showCloudLogin}>
+                  <i className="fa-brands fa-whatsapp me-2"></i>
+                  {printLanguage === 'mr' ? 'PDF व्हाट्सअँपवर शेअर करा' : 'Share PDF on WhatsApp'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* One barcode scanner fills Model and Serial Number together. */}
       {scannerField && (
         <div className="scanner-overlay">
           <div className="scanner-box">
             <div className="scanner-header">
-              <span>Scan Model / Capacity and Serial Number</span>
+              <span>Scan Model and Serial Number</span>
               <button type="button" onClick={stopScanner} aria-label="Close scanner">&times;</button>
             </div>
             <video ref={videoRef} className="scanner-video" muted playsInline></video>
+            {cameraDevices.length > 1 && <div className="scanner-camera-choice">
+              <label htmlFor="sales-scanner-camera">Camera (Optional)</label>
+              <select id="sales-scanner-camera" value={selectedCameraId} onChange={changeScannerCamera}>
+                {cameraDevices.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{camera.label || `Camera ${index + 1}`}</option>)}
+              </select>
+            </div>}
             <div className="scanner-hint">
-              Point the camera steadily at the barcode. Both fields will be filled automatically.
+              Point the camera steadily at the QR code or barcode. Model number and serial number will be filled automatically. You may optionally select a mobile-as-webcam or external camera above.
             </div>
+            {scannerError && <div className="alert alert-warning m-3 py-2 small">{scannerError}</div>}
           </div>
         </div>
       )}
