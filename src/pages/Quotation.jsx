@@ -73,7 +73,7 @@ export default function Quotation() {
   const [options, setOptions] = useState(quotationOptions)
   const [notes, setNotes] = useState(DEFAULT_QUOTATION_NOTES)
   const [quotationType, setQuotationType] = useState('gst')
-  const [gst, setGst] = useState(getGstSettings)
+  const [gst, setGst] = useState(() => ({ ...getGstSettings(), totalRate: '', cgstRate: 0, sgstRate: 0 }))
   const [gstRateOptions, setGstRateOptions] = useState(() => getGstSettings().rates)
   const [sharingPdf, setSharingPdf] = useState(false)
   const [pdfItemsSnapshot, setPdfItemsSnapshot] = useState(null)
@@ -282,12 +282,14 @@ export default function Quotation() {
     if (!isValidIndianPhone(customer.phone)) return alert('Please enter a valid 10-digit WhatsApp number.'), false
     if (!customer.address.trim()) return alert('Please enter the customer address.'), false
     if (!customer.batteryType) return alert('Please select the battery type.'), false
+    if (includeGst && gst.totalRate === '') return alert('Please select the GST rate.'), false
     const incompleteIndex = items.findIndex((item) => !String(item.brand || '').trim() || !String(item.model || '').trim() || !String(item.warranty || '').trim() || Number(item.quantity || 0) <= 0 || Number(item.rate || 0) <= 0)
     if (incompleteIndex >= 0) return alert(`Please complete all fields for battery row ${incompleteIndex + 1}.`), false
     return true
   }
   function validatePrintableQuotation() {
     if (!customer.name.trim() || !isValidIndianPhone(customer.phone) || !customer.address.trim() || !customer.batteryType) return validateQuotation()
+    if (includeGst && gst.totalRate === '') return alert('Please select the GST rate.'), false
     const selectedRows = itemsByType[quotationType]
     if (!selectedRows.some((item) => item.brand || item.model || item.warranty || Number(item.rate || 0) > 0)) return alert(`Please complete the ${quotationType === 'gst' ? 'GST' : 'Without GST'} quotation.`), false
     const incompleteIndex = selectedRows.findIndex((item) => !String(item.brand || '').trim() || !String(item.model || '').trim() || !String(item.warranty || '').trim() || Number(item.quantity || 0) <= 0 || Number(item.rate || 0) <= 0)
@@ -526,7 +528,8 @@ export default function Quotation() {
               </div>
               <div className="col-md-4">
                 <label className="form-label">Total GST</label>
-                <select className="form-select" value={gst.totalRate} onChange={(event) => { const totalRate = Number(event.target.value); setGst((current) => ({ ...current, totalRate, cgstRate: totalRate / 2, sgstRate: totalRate / 2 })) }}>
+                <select className="form-select" value={gst.totalRate} onChange={(event) => { const totalRate = event.target.value === '' ? '' : Number(event.target.value); setGst((current) => ({ ...current, totalRate, cgstRate: totalRate === '' ? 0 : totalRate / 2, sgstRate: totalRate === '' ? 0 : totalRate / 2 })) }}>
+                  <option value="">Select GST</option>
                   {gstRateOptions.map((rate) => <option key={rate} value={rate}>{rate}% (CGST {rate / 2}% + SGST {rate / 2}%)</option>)}
                 </select>
                 <small className="quotation-history-note">Used for this quotation only. These GST controls are not printed.</small>
@@ -659,7 +662,8 @@ export default function Quotation() {
         {includeGst && <div className="quotation-gst-summary edit-only">
           <div className="quotation-gst-rate-control">
             <label htmlFor="quotation-total-gst">Total GST</label>
-            <select id="quotation-total-gst" value={gst.totalRate} onChange={(event) => { const totalRate = Number(event.target.value); setGst((current) => ({ ...current, totalRate, cgstRate: totalRate / 2, sgstRate: totalRate / 2 })) }}>
+            <select id="quotation-total-gst" value={gst.totalRate} onChange={(event) => { const totalRate = event.target.value === '' ? '' : Number(event.target.value); setGst((current) => ({ ...current, totalRate, cgstRate: totalRate === '' ? 0 : totalRate / 2, sgstRate: totalRate === '' ? 0 : totalRate / 2 })) }}>
+              <option value="">Select GST</option>
               {gstRateOptions.map((rate) => <option key={rate} value={rate}>{rate}% (CGST {rate / 2}% + SGST {rate / 2}%)</option>)}
             </select>
           </div>
